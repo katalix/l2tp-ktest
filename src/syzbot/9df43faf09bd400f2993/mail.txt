@@ -1,0 +1,140 @@
+Hello,
+
+syzkaller hit the following crash on  
+b625c1ff82272e26c76570d3c7123419ec345b20
+git://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/master
+compiler: gcc (GCC) 7.1.1 20170620
+.config is attached
+Raw console output is attached.
+C reproducer is attached
+syzkaller reproducer is attached. See https://goo.gl/kgGztJ
+for information about syzkaller reproducers
+
+
+IMPORTANT: if you fix the bug, please add the following tag to the commit:
+Reported-by: syzbot+9df43faf09bd400f2993@syzkaller.appspotmail.com
+It will help syzbot understand when the bug is fixed. See footer for  
+details.
+If you forward the report, please keep this part and the footer.
+
+==================================================================
+BUG: KASAN: use-after-free in __read_once_size include/linux/compiler.h:188  
+[inline]
+BUG: KASAN: use-after-free in sk_dst_get include/net/sock.h:1768 [inline]
+BUG: KASAN: use-after-free in pppol2tp_session_init net/l2tp/l2tp_ppp.c:596  
+[inline]
+BUG: KASAN: use-after-free in pppol2tp_connect+0x1a91/0x1dd0  
+net/l2tp/l2tp_ppp.c:756
+Read of size 8 at addr ffff8801c2c402a8 by task syzkaller472056/4457
+
+CPU: 0 PID: 4457 Comm: syzkaller472056 Not tainted  
+4.15.0-rc7-next-20180115+ #97
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS  
+Google 01/01/2011
+Call Trace:
+  __dump_stack lib/dump_stack.c:17 [inline]
+  dump_stack+0x194/0x257 lib/dump_stack.c:53
+  print_address_description+0x73/0x250 mm/kasan/report.c:256
+  kasan_report_error mm/kasan/report.c:354 [inline]
+  kasan_report+0x23b/0x360 mm/kasan/report.c:412
+  __asan_report_load8_noabort+0x14/0x20 mm/kasan/report.c:433
+  __read_once_size include/linux/compiler.h:188 [inline]
+  sk_dst_get include/net/sock.h:1768 [inline]
+  pppol2tp_session_init net/l2tp/l2tp_ppp.c:596 [inline]
+  pppol2tp_connect+0x1a91/0x1dd0 net/l2tp/l2tp_ppp.c:756
+  SYSC_connect+0x213/0x4a0 net/socket.c:1613
+  SyS_connect+0x24/0x30 net/socket.c:1594
+  entry_SYSCALL_64_fastpath+0x29/0xa0
+RIP: 0033:0x445c69
+RSP: 002b:00007f200cbabdb8 EFLAGS: 00000297 ORIG_RAX: 000000000000002a
+RAX: ffffffffffffffda RBX: 00000000006dbc24 RCX: 0000000000445c69
+RDX: 000000000000002e RSI: 00000000205fafd2 RDI: 0000000000000005
+RBP: 00000000006dbc20 R08: 0000000000000000 R09: 0000000000000000
+R10: 0000000000000000 R11: 0000000000000297 R12: 0000000000000000
+R13: 00007ffc2560dabf R14: 00007f200cbac9c0 R15: 0000000000000005
+
+Allocated by task 4454:
+  save_stack+0x43/0xd0 mm/kasan/kasan.c:447
+  set_track mm/kasan/kasan.c:459 [inline]
+  kasan_kmalloc+0xad/0xe0 mm/kasan/kasan.c:552
+  kasan_slab_alloc+0x12/0x20 mm/kasan/kasan.c:489
+  kmem_cache_alloc+0x12e/0x760 mm/slab.c:3541
+  sk_prot_alloc+0x65/0x2a0 net/core/sock.c:1465
+  sk_alloc+0x105/0x1440 net/core/sock.c:1525
+  inet6_create+0x44d/0x10f0 net/ipv6/af_inet6.c:183
+  __sock_create+0x4d4/0x850 net/socket.c:1259
+  sock_create net/socket.c:1299 [inline]
+  SYSC_socket net/socket.c:1329 [inline]
+  SyS_socket+0xeb/0x1d0 net/socket.c:1309
+  entry_SYSCALL_64_fastpath+0x29/0xa0
+
+Freed by task 4457:
+  save_stack+0x43/0xd0 mm/kasan/kasan.c:447
+  set_track mm/kasan/kasan.c:459 [inline]
+  __kasan_slab_free+0x11a/0x170 mm/kasan/kasan.c:520
+  kasan_slab_free+0xe/0x10 mm/kasan/kasan.c:527
+  __cache_free mm/slab.c:3485 [inline]
+  kmem_cache_free+0x86/0x2b0 mm/slab.c:3743
+  sk_prot_free net/core/sock.c:1506 [inline]
+  __sk_destruct+0x622/0x910 net/core/sock.c:1590
+  sk_destruct+0x47/0x80 net/core/sock.c:1598
+  __sk_free+0xf1/0x2b0 net/core/sock.c:1609
+  sk_free+0x2a/0x40 net/core/sock.c:1620
+  sock_put include/net/sock.h:1660 [inline]
+  l2tp_session_free+0x21c/0x2b0 net/l2tp/l2tp_core.c:1665
+  l2tp_session_dec_refcount net/l2tp/l2tp_core.h:302 [inline]
+  pppol2tp_session_destruct+0xd4/0x110 net/l2tp/l2tp_ppp.c:448
+  __sk_destruct+0xfd/0x910 net/core/sock.c:1563
+  sk_destruct+0x47/0x80 net/core/sock.c:1598
+  __sk_free+0xf1/0x2b0 net/core/sock.c:1609
+  sk_free+0x2a/0x40 net/core/sock.c:1620
+  sock_put include/net/sock.h:1660 [inline]
+  pppol2tp_put_sk+0x49/0x60 net/l2tp/l2tp_ppp.c:457
+  __rcu_reclaim kernel/rcu/rcu.h:172 [inline]
+  rcu_do_batch kernel/rcu/tree.c:2674 [inline]
+  invoke_rcu_callbacks kernel/rcu/tree.c:2933 [inline]
+  __rcu_process_callbacks kernel/rcu/tree.c:2900 [inline]
+  rcu_process_callbacks+0xd6c/0x17f0 kernel/rcu/tree.c:2917
+  __do_softirq+0x2d7/0xb85 kernel/softirq.c:285
+
+The buggy address belongs to the object at ffff8801c2c40080
+  which belongs to the cache UDPv6 of size 1664
+The buggy address is located 552 bytes inside of
+  1664-byte region [ffff8801c2c40080, ffff8801c2c40700)
+The buggy address belongs to the page:
+page:ffffea00070b1000 count:1 mapcount:0 mapping:ffff8801c2c40080 index:0x0
+flags: 0x2fffc0000000100(slab)
+raw: 02fffc0000000100 ffff8801c2c40080 0000000000000000 0000000100000002
+raw: ffffea0007624fe0 ffffea000760c820 ffff8801d3379840 0000000000000000
+page dumped because: kasan: bad access detected
+
+Memory state around the buggy address:
+  ffff8801c2c40180: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+  ffff8801c2c40200: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+> ffff8801c2c40280: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+                                   ^
+  ffff8801c2c40300: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+  ffff8801c2c40380: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+==================================================================
+
+
+---
+This bug is generated by a dumb bot. It may contain errors.
+See https://goo.gl/tpsmEJ for details.
+Direct all questions to syzkaller@googlegroups.com.
+
+syzbot will keep track of this bug report.
+If you forgot to add the Reported-by tag, once the fix for this bug is  
+merged
+into any tree, please reply to this email with:
+#syz fix: exact-commit-title
+If you want to test a patch for this bug, please reply with:
+#syz test: git://repo/address.git branch
+and provide the patch inline or as an attachment.
+To mark this as a duplicate of another syzbot report, please reply with:
+#syz dup: exact-subject-of-another-report
+If it's a one-off invalid bug report, please reply with:
+#syz invalid
+Note: if the crash happens again, it will cause creation of a new bug  
+report.
+Note: all commands must start from beginning of the line in the email body.

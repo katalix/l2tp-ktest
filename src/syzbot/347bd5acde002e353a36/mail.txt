@@ -1,0 +1,119 @@
+syzbot has found reproducer for the following crash on upstream commit
+4bf772b14675411a69b3c807f73006de0fe4b649 (Fri Feb 2 01:48:47 2018 +0000)
+Merge tag 'drm-for-v4.16' of git://people.freedesktop.org/~airlied/linux
+
+So far this crash happened 14 times on mmots, net-next, upstream.
+C reproducer is attached.
+syzkaller reproducer is attached.
+Raw console output is attached.
+compiler: gcc (GCC) 7.1.1 20170620
+.config is attached.
+
+IMPORTANT: if you fix the bug, please add the following tag to the commit:
+Reported-by: syzbot+347bd5acde002e353a36@syzkaller.appspotmail.com
+It will help syzbot understand when the bug is fixed.
+
+==================================================================
+BUG: KASAN: use-after-free in inet_shutdown+0x2d4/0x350  
+net/ipv4/af_inet.c:819
+Read of size 4 at addr ffff8801c008f540 by task syzkaller114342/5197
+
+CPU: 0 PID: 5197 Comm: syzkaller114342 Not tainted 4.15.0+ #292
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS  
+Google 01/01/2011
+Call Trace:
+  __dump_stack lib/dump_stack.c:17 [inline]
+  dump_stack+0x194/0x257 lib/dump_stack.c:53
+  print_address_description+0x73/0x250 mm/kasan/report.c:252
+  kasan_report_error mm/kasan/report.c:351 [inline]
+  kasan_report+0x25b/0x340 mm/kasan/report.c:409
+  __asan_report_load4_noabort+0x14/0x20 mm/kasan/report.c:429
+  inet_shutdown+0x2d4/0x350 net/ipv4/af_inet.c:819
+  pppol2tp_session_close+0x92/0xf0 net/l2tp/l2tp_ppp.c:430
+  l2tp_tunnel_closeall+0x305/0x410 net/l2tp/l2tp_core.c:1285
+  l2tp_udp_encap_destroy+0x95/0x100 net/l2tp/l2tp_core.c:1308
+  udpv6_destroy_sock+0x161/0x190 net/ipv6/udp.c:1407
+  sk_common_release+0x6b/0x2f0 net/core/sock.c:2999
+  udp_lib_close+0x15/0x20 include/net/udp.h:203
+  inet_release+0xed/0x1c0 net/ipv4/af_inet.c:427
+  inet6_release+0x50/0x70 net/ipv6/af_inet6.c:435
+  sock_release+0x8d/0x1e0 net/socket.c:595
+  sock_close+0x16/0x20 net/socket.c:1149
+  __fput+0x327/0x7e0 fs/file_table.c:209
+  ____fput+0x15/0x20 fs/file_table.c:243
+  task_work_run+0x199/0x270 kernel/task_work.c:113
+  tracehook_notify_resume include/linux/tracehook.h:191 [inline]
+  exit_to_usermode_loop+0x275/0x2f0 arch/x86/entry/common.c:165
+  prepare_exit_to_usermode arch/x86/entry/common.c:195 [inline]
+  syscall_return_slowpath+0x490/0x550 arch/x86/entry/common.c:264
+  entry_SYSCALL_64_fastpath+0x9e/0xa0
+RIP: 0033:0x44bbd9
+RSP: 002b:00007f8e19861ce8 EFLAGS: 00000206 ORIG_RAX: 0000000000000003
+RAX: 0000000000000000 RBX: 00000000006ddc24 RCX: 000000000044bbd9
+RDX: 000000000044bbd9 RSI: 0000000000000000 RDI: 0000000000000020
+RBP: 00000000006ddc20 R08: 0000000000000000 R09: 0000000000000000
+R10: 0000000000000000 R11: 0000000000000206 R12: 0000000000000000
+R13: 00007ffc84c0bb3f R14: 00007f8e198629c0 R15: 000000000000000d
+
+Allocated by task 5216:
+  save_stack+0x43/0xd0 mm/kasan/kasan.c:447
+  set_track mm/kasan/kasan.c:459 [inline]
+  kasan_kmalloc+0xad/0xe0 mm/kasan/kasan.c:551
+  kasan_slab_alloc+0x12/0x20 mm/kasan/kasan.c:489
+  kmem_cache_alloc+0x12e/0x760 mm/slab.c:3540
+  sock_alloc_inode+0x70/0x300 net/socket.c:244
+  alloc_inode+0x65/0x180 fs/inode.c:209
+  new_inode_pseudo+0x69/0x190 fs/inode.c:891
+  sock_alloc+0x41/0x270 net/socket.c:565
+  __sock_create+0x148/0x850 net/socket.c:1249
+  sock_create net/socket.c:1325 [inline]
+  SYSC_socket net/socket.c:1355 [inline]
+  SyS_socket+0xeb/0x1d0 net/socket.c:1335
+  entry_SYSCALL_64_fastpath+0x29/0xa0
+
+Freed by task 5291:
+  save_stack+0x43/0xd0 mm/kasan/kasan.c:447
+  set_track mm/kasan/kasan.c:459 [inline]
+  kasan_slab_free+0x71/0xc0 mm/kasan/kasan.c:524
+  __cache_free mm/slab.c:3484 [inline]
+  kmem_cache_free+0x83/0x2a0 mm/slab.c:3742
+  sock_destroy_inode+0x56/0x70 net/socket.c:274
+  destroy_inode+0x15d/0x200 fs/inode.c:266
+  evict+0x57e/0x920 fs/inode.c:571
+  iput_final fs/inode.c:1516 [inline]
+  iput+0x7b9/0xaf0 fs/inode.c:1543
+  dentry_unlink_inode+0x4b0/0x5e0 fs/dcache.c:371
+  __dentry_kill+0x3de/0x700 fs/dcache.c:575
+  dentry_kill fs/dcache.c:616 [inline]
+  dput.part.21+0x6fb/0x830 fs/dcache.c:826
+  dput+0x1f/0x30 fs/dcache.c:790
+  __fput+0x51c/0x7e0 fs/file_table.c:227
+  ____fput+0x15/0x20 fs/file_table.c:243
+  task_work_run+0x199/0x270 kernel/task_work.c:113
+  tracehook_notify_resume include/linux/tracehook.h:191 [inline]
+  exit_to_usermode_loop+0x275/0x2f0 arch/x86/entry/common.c:165
+  prepare_exit_to_usermode arch/x86/entry/common.c:195 [inline]
+  syscall_return_slowpath+0x490/0x550 arch/x86/entry/common.c:264
+  entry_SYSCALL_64_fastpath+0x9e/0xa0
+
+The buggy address belongs to the object at ffff8801c008f540
+  which belongs to the cache sock_inode_cache of size 992
+The buggy address is located 0 bytes inside of
+  992-byte region [ffff8801c008f540, ffff8801c008f920)
+The buggy address belongs to the page:
+page:ffffea00070023c0 count:1 mapcount:0 mapping:ffff8801c008f0c0  
+index:0xffff8801c008fffd
+flags: 0x2fffc0000000100(slab)
+raw: 02fffc0000000100 ffff8801c008f0c0 ffff8801c008fffd 0000000100000003
+raw: ffffea00070023a0 ffffea00070024a0 ffff8801d9fe6380 0000000000000000
+page dumped because: kasan: bad access detected
+
+Memory state around the buggy address:
+  ffff8801c008f400: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  ffff8801c008f480: 00 00 00 00 fc fc fc fc fc fc fc fc fc fc fc fc
+> ffff8801c008f500: fc fc fc fc fc fc fc fc fb fb fb fb fb fb fb fb
+                                            ^
+  ffff8801c008f580: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+  ffff8801c008f600: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+==================================================================
+

@@ -1,0 +1,420 @@
+#!/bin/bash
+#
+# Test suite for Linux Kernel L2TP code
+#
+# Depends on iproute2 with l2tp support
+#
+
+readonly KMEMLEAK=/sys/kernel/debug/kmemleak
+
+DO_KMEMLEAK_CHECK=0
+TESTCASES=
+CHECK_COUNT=0
+CHECK_FAIL=0
+EXIT_ON_FIRST_ERROR=0
+VERBOSE=0
+
+log() { echo "[$(date)] $@"; }
+err() { log "ERROR: $@" 1>&2; false; }
+die() { log "FATAL: $@" 1>&2; exit 1; }
+dbg() { test $VERBOSE -ne 0 && log "$@"; }
+
+runtest()
+{
+    local ret=0
+
+    kmemleak_clear
+    type pre_$1 &> /dev/null && pre_$1
+
+    $1
+    ret=$?
+
+    type post_$1 &> /dev/null && post_$1
+    kmemleak_check || {
+        err "kernel memory leak detected for testcase $1"
+        cat $KMEMLEAK
+    }
+
+    return $ret
+}
+
+report_and_exit() {
+    local ntests=$1
+    local check_count=$2
+    local nfails=$3
+    local exit_code=$4
+    local reason=""
+    test $exit_code -eq 0 || reason="(aborted)"
+    log "Summary: $ntests testcases run ($check_count checks), of which $nfails failed $reason"
+    exit $exit_code
+}
+
+check()
+{
+    dbg "$@"
+    CHECK_COUNT=$((CHECK_COUNT+1))
+    if ! $@
+    then
+        err "$@ failed on line ${BASH_LINENO[0]} in ${FUNCNAME[1]}"
+        CHECK_FAIL=$((CHECK_FAIL+1))
+        test $EXIT_ON_FIRST_ERROR -eq 0 || report_and_exit $ntests $CHECK_COUNT 1 1
+    fi
+}
+
+# ip l2tp wrappers
+count_tunnels() { ip l2tp show tunnel | grep -c ^Tunnel; }
+count_sessions() { ip l2tp show session | grep -e " in tunnel $1" | grep -c ^Session; }
+get_tunnel_ids() { ip l2tp show tunnel | awk '/^Tun/ { gsub(/,/, ""); print $2; }'; }
+get_session_ids() { ip l2tp show session | grep -e " in tunnel $1" | awk '/^Session/ { gsub(/,/, ""); print $2; }'; }
+is_tunnel() { local i; for i in $(get_tunnel_ids); do if test $i -eq $1; then return 0; fi; done; return 1; }
+delay_no_tunnel() {
+    local i=0
+    # some kernels seem to lag on tunnel destroy, so let's try to account for that
+    while test $(count_tunnels) -ne 0 && test $i -lt 20; do sleep 0.2s; i=$((i+1)); done
+}
+close_tunnel() {
+    local i=0
+    ip l2tp del tunnel tunnel_id $1 || return $?
+    local s; for s in $(get_session_ids $1); do ip l2tp del session tunnel_id $1 session_id $s; done
+    # some kernels seem to lag on tunnel destroy, so let's try to account for that
+    while is_tunnel $1 && test $i -lt 20; do sleep 0.2s; i=$((i+1)); done
+}
+
+# kmemleak wrappers
+kmemleak_clear()
+{
+    if test 1 -eq $DO_KMEMLEAK_CHECK && test -f $KMEMLEAK
+    then
+        echo clear > $KMEMLEAK
+    fi
+}
+
+kmemleak_check()
+{
+    if test 1 -eq $DO_KMEMLEAK_CHECK && test -f $KMEMLEAK
+    then
+        echo scan > $KMEMLEAK
+        test 0 -eq $(wc -l $KMEMLEAK | cut -d" " -f1)
+    else
+        return 0
+    fi
+}
+
+# version-specifics
+current_kernel_version() { awk '/^Linux version/ { split($3, a, /\./); gsub(/[^0-9].*$/, "",a[3]); print a[1], a[2], a[3] }' /proc/version; }
+kernel_version() { echo $(( ($1 << 16) + ($2 << 8) + $3 )); }
+
+have_ipv6() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 5 0); }
+have_l2tpip_ipv6() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 8 0); }
+have_udp_encap_destroy() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 9 0); }
+
+# Tunnel / session lifetimes
+
+# $1 -- version
+# $2 -- create api
+# $3 -- delete api
+# $4 -- encap
+# $5 -- family
+# $6 -- optional pw type (no pw if not defined)
+managed_tunl_check()
+{
+    local pw=""
+    test -n "$6" && pw="-p $6"
+
+    # Note that older kernels w/o the udp encap_destroy hook are not
+    # able to successfully close l2tp tunnel contexts in the kernel
+    # on close of the userspace socket.
+
+    # Make sure we don't have any tunnels to start off with
+    check test $(count_tunnels) -eq 0
+
+    # App exit without closing the tunnel should result in tunnel delete
+    check $(dirname $0)/kcreate -v $1 -m -n -c $2 -d $3 -e $4 -f $5 $pw
+    delay_no_tunnel
+    test $HAVE_UDP_ENCAP_DESTROY -eq 1 && check test $(count_tunnels) -eq 0
+
+    # Force close any extant tunnels: they should close when asked with
+    # iproute or it's a failure.
+    for i in $(get_tunnel_ids); do check close_tunnel $i; done
+    check test $(count_tunnels) -eq 0
+    test $(count_tunnels) -eq 0 || report_and_exit $ntests $CHECK_COUNT 1 1
+
+    # App exit after closing the tunnel should result in tunnel delete,
+    # *unless* we're using socket close for a kernel w/o the
+    # udp encap_destroy hook
+    check $(dirname $0)/kcreate -v $1 -m -c $2 -d $3 -e $4 -f $5 $pw
+    delay_no_tunnel
+    if test $HAVE_UDP_ENCAP_DESTROY -eq 1 || test $3 = "netlink"
+    then
+        check test $(count_tunnels) -eq 0
+    fi
+
+    # Close any tunnels still around
+    for i in $(get_tunnel_ids); do check close_tunnel $i; done
+    test $(count_tunnels) -eq 0 || report_and_exit $ntests $CHECK_COUNT 1 1
+}
+
+# $1 -- version
+# $2 -- create api
+# $3 -- delete api
+# $4 -- encap
+# $5 -- family
+# $6 -- optional pw type (no pw if not defined)
+unmanaged_tunl_check()
+{
+    local pw=""
+    test -n "$6" && pw="-p $6"
+
+    # Make sure we don't have any tunnels to start off with
+    check test $(count_tunnels) -eq 0
+
+    # App exit without closing the tunnel should not result in tunnel delete
+    check $(dirname $0)/kcreate -v $1 -n -c $2 -d $3 -e $4 -f $5 $pw
+    check test $(count_tunnels) -eq 1
+
+    # Close the newly created tunnel(s)
+    for i in $(get_tunnel_ids); do check close_tunnel $i; done
+    check test $(count_tunnels) -eq 0
+
+    # App exit after closing the tunnel should result in tunnel delete
+    check $(dirname $0)/kcreate -v $1 -c $2 -d $3 -e $4 -f $5 $pw
+    delay_no_tunnel
+    check test $(count_tunnels) -eq 0
+
+    # Close any tunnels still around
+    for i in $(get_tunnel_ids); do check close_tunnel $i; done
+    test $(count_tunnels) -eq 0 || report_and_exit $ntests $CHECK_COUNT 1 1
+}
+
+# $1 -- encap
+# $2 -- family
+# $3 -- pseudowire
+v3_tunl_check()
+{
+    # We should be able to destroy a managed tunnel using both the socket
+    # and the netlink APIs
+    managed_tunl_check 3 netlink netlink $1 $2 $3
+    managed_tunl_check 3 netlink socket $1 $2 $3
+
+    # In the special case of PPP pseudowires, there is a socket API for
+    # tunnel and session creation, so check all permutations of that
+    if test "$3" = "ppp" && test "$1" = "udp"
+    then
+        managed_tunl_check 3 socket netlink $1 $2 $3
+        managed_tunl_check 3 socket socket $1 $2 $3
+    fi
+
+    # Unmanaged tunnels are only accessible via the netlink API
+    unmanaged_tunl_check 3 netlink netlink $1 $2 $3
+}
+
+# L2TPv2 is UDP encap, PPP pw only
+# $1 -- family
+# $2 -- pseudowire
+v2_tunl_check()
+{
+    # We should be able to create/destroy a managed tunnel using both the
+    # socket and the netlink APIs
+    managed_tunl_check 2 netlink netlink udp $1 $2
+    managed_tunl_check 2 netlink socket udp $1 $2
+    managed_tunl_check 2 socket netlink udp $1 $2
+    managed_tunl_check 2 socket socket udp $1 $2
+
+    # Unmanaged v2 tunnels aren't allowed
+}
+
+# $1 -- L2TP version
+# $2 -- API
+# $3 -- family
+# $4 -- encap
+# $5 -- pseudowire
+session_data_check()
+{
+    OPT_QUIET=1 check $(dirname $0)/datapath_verify -A -v $1 -c $2 -d $2 -f $3 -e $4 -p $5 -t 2 -s 10
+}
+
+#
+# Entry point
+#
+
+log "Kernel $(current_kernel_version) ($(kernel_version $(current_kernel_version)))"
+
+# Check if IPv6 present
+have_ipv6 && HAVE_IPV6=1 || HAVE_IPV6=0
+test $HAVE_IPV6 -eq 1 && log "Have IPv6" || log "Have no IPv6"
+
+# Check if L2TP IPv6 is supported
+have_l2tpip_ipv6 && HAVE_L2TPIP_IPV6=1 || HAVE_L2TPIP_IPV6=0
+test $HAVE_L2TPIP_IPV6 -eq 1 && log "Have L2TP IP encap IPv6" || log "Have no L2TP IP encap IPv6"
+
+# Check whether kernel supports the UDP socket destructor hook
+have_udp_encap_destroy && HAVE_UDP_ENCAP_DESTROY=1 || HAVE_UDP_ENCAP_DESTROY=0
+test $HAVE_UDP_ENCAP_DESTROY -eq 1 && log "Have UDP encap_destroy hook" || log "Have no UDP encap_destroy hook"
+
+# L2TPv2, IPv4
+tc_api_v2_inet_nopw() { v2_tunl_check inet; }
+tc_api_v2_inet_ppp() { v2_tunl_check inet ppp; }
+
+# L2TPv2, IPv6
+if test $HAVE_IPV6 -eq 1
+then
+    tc_api_v2_inet6_nopw() { v2_tunl_check inet6; }
+    tc_api_v2_inet6_ppp() { v2_tunl_check inet6 ppp; }
+fi
+
+# L2TPv3, UDP encap, IPv4
+tc_api_v3_udp_inet_nopw() { v3_tunl_check udp inet; }
+tc_api_v3_udp_inet_eth() { v3_tunl_check udp inet eth; }
+tc_api_v3_udp_inet_ppp() { v3_tunl_check udp inet ppp; }
+
+# L2TPv3, IP encap, IPv4
+tc_api_v3_ip_inet_nopw() { v3_tunl_check ip inet; }
+tc_api_v3_ip_inet_eth() { v3_tunl_check ip inet eth; }
+tc_api_v3_ip_inet_ppp() { v3_tunl_check ip inet ppp; }
+
+# L2TPv3, UDP encap, IPv6
+if test $HAVE_IPV6 -eq 1
+then
+    tc_api_v3_udp_inet6_nopw() { v3_tunl_check udp inet6; }
+    tc_api_v3_udp_inet6_eth() { v3_tunl_check udp inet6 eth; }
+    tc_api_v3_udp_inet6_ppp() { v3_tunl_check udp inet6 ppp; }
+fi
+
+# L2TPv3, IP encap, IPv6
+if test $HAVE_L2TPIP_IPV6 -eq 1
+then
+    tc_api_v3_ip_inet6_nopw() { v3_tunl_check ip inet6; }
+    tc_api_v3_ip_inet6_eth() { v3_tunl_check ip inet6 eth; }
+    tc_api_v3_ip_inet6_ppp() { v3_tunl_check ip inet6 ppp; }
+fi
+
+# Tunnel delete with userspace thread races
+tc_race_delete()
+{
+    local i=
+    check test $(count_tunnels) -eq 0
+
+    for i in 1 2 3 4 5
+    do
+        OPT_SILENT=1 check $(dirname $0)/tunl_delete_race -c 150
+    done
+
+    check test $(count_tunnels) -eq 0
+}
+
+# Tunnel query with userspace thread races
+tc_race_query()
+{
+    local i=
+    check test $(count_tunnels) -eq 0
+
+    for i in 1 2 3 4 5
+    do
+        OPT_SILENT=1 check $(dirname $0)/tunl_query_race -c 150
+    done
+
+    check test $(count_tunnels) -eq 0
+}
+
+# Session data, L2TPv2
+tc_data_v2_soapi_inet_udp_ppp() { session_data_check 2 socket inet udp ppp; }
+tc_data_v2_netlink_inet_udp_ppp() { session_data_check 2 netlink inet udp ppp; }
+if test $HAVE_IPV6 -eq 1
+then
+    tc_data_v2_soapi_inet6_udp_ppp() { session_data_check 2 socket inet6 udp ppp; }
+    tc_data_v2_netlink_inet6_udp_ppp() { session_data_check 2 netlink inet6 udp ppp; }
+fi
+
+# Session data, L2TPv3
+tc_data_v3_netlink_inet_udp_ppp() { session_data_check 3 netlink inet udp ppp; }
+if test $HAVE_IPV6
+then
+    tc_data_v3_netlink_inet_ip_ppp() { session_data_check 3 netlink inet ip ppp; }
+fi
+if test $HAVE_IPV6 -eq 1
+then
+    tc_data_v3_netlink_inet6_udp_ppp() { session_data_check 3 netlink inet6 udp ppp; }
+    if test $HAVE_L2TPIP_IPV6 -eq 1
+    then
+        tc_data_v3_netlink_inet6_ip_ppp() { session_data_check 3 netlink inet6 ip ppp; }
+    fi
+fi
+
+show_usage()
+{
+    cat << __EOF__
+    Name:   $(basename $0)
+    Desc:   A unit and test suite for the Linux kernel L2TP code
+    Usage:  $(basename $0) [options]
+        -h  print this usage information
+        -l  list available tests
+        -k  enable kmemleak checking
+        -e  exit on first test failure
+        -t  specify testcases to run (e.g. -t "tc_api_v3_ip_inet_ppp tc_api_v3_ip_inet6_ppp")
+        -v  log verbose debug
+__EOF__
+}
+
+show_tests()
+{
+    local tc=
+    local c=0
+    echo "Available testcases:"
+    for tc in $TESTCASES
+    do
+        c=$((c+1))
+        echo "   testcase $c : $tc"
+    done
+}
+
+#
+# Entry point
+#
+TESTCASES=$(compgen -A function | grep ^tc_)
+
+while getopts "hlkevt:" opt
+do
+    case $opt in
+    h) show_usage; exit 0;;
+    l) show_tests; exit 0;;
+    k) DO_KMEMLEAK_CHECK=1;;
+    e) EXIT_ON_FIRST_ERROR=1;;
+    v) VERBOSE=1;;
+    t) TESTCASES=$OPTARG;;
+    ?) exit 1;;
+    esac
+done
+
+if test 1 -eq $DO_KMEMLEAK_CHECK
+then
+    test -f $KMEMLEAK || log "WARNING: kernel mem leak checks disabled: $KMEMLEAK not present"
+fi
+
+if test "root" != $(whoami)
+then
+    log "Root capabilities are required to run the test suite!"
+    exit 1
+fi
+
+for m in l2tp_core l2tp_ip l2tp_ip6 l2tp_eth l2tp_ppp l2tp_netlink
+do
+    modprobe $m
+done
+
+ntests=0
+nfails=0
+for tc in $TESTCASES
+do
+    ntests=$((ntests+1))
+    log "testcase $ntests : $tc"
+    check_fail=$CHECK_FAIL
+    runtest $tc
+    if test $? -ne 0 || test $CHECK_FAIL -ne $check_fail
+    then
+        err "testcase $tc FAILED"
+        nfails=$((nfails+1))
+    else
+        log "testcase $ntests : ok"
+    fi
+done
+report_and_exit $ntests $CHECK_COUNT $nfails 0
