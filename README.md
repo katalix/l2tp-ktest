@@ -53,6 +53,12 @@ To build the tools:
 The build outputs are combined in a tarball, l2tp-ktest.tgz, for easy copying
 to a test machine.
 
+On some older systems the syzbot applications (see below) fail to build:
+in this situation they can be disabled in the makefile using the variable
+OPT_NO_SYZBOT_APPS:
+
+    $ make OPT_NO_SYZBOT_APPS=1
+
 ## Running the test suite
 
 Once built, the test tools can be run in-place in the build directory, or
@@ -106,7 +112,7 @@ been reported to the mailing list: the src/syzbot directory contains the details
 these reports for reference.
 
 Since the syzbot reproducer applications generally run in a never-ending loop, they
-are not directly executed by l2tp_ktest.
+are not executed by l2tp_ktest.
 
 Instead, run them directly, watching a serial console for any oopses.
 
