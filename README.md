@@ -124,3 +124,18 @@ environmental variables:
 * OPT_DEBUG should be defined in order to make logging more verbose
 * OPT_QUIET should be defined in order to suppress all non error-related messages
 * OPT_SILENT should be defined in order to suppress error messages
+
+# History and context
+
+We ([Katalix Systems Ltd.](https://katalix.com)) created l2tp-ktest as an internal project
+supporting our work on the Linux L2TP subsystem and our [ProL2TP](https://prol2tp.com)
+product which makes use of it.
+
+Some of our [ProL2TP](https://prol2tp.com) customers deploy to embedded systems using
+older kernels, and in such situations l2tp-ktest is useful to validate back-ported patches.
+
+l2tp-ktest is also intended, in part, to act as a reference to the Linux L2TP API, which
+is only partially covered by existing projects such as [iproute2](https://github.com/shemminger/iproute2).
+
+Since 2019 the Linux kernel has included built-in L2TP tests in the
+[kernel source tree](https://github.com/torvalds/linux/blob/master/tools/testing/selftests/net/l2tp.sh).
