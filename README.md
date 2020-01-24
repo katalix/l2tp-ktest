@@ -139,3 +139,4 @@ is only partially covered by existing projects such as [iproute2](https://github
 
 Since 2019 the Linux kernel has included built-in L2TP tests in the
 [kernel source tree](https://github.com/torvalds/linux/blob/master/tools/testing/selftests/net/l2tp.sh).
+These have some overlap with l2tp-ktest, but are distinct tests in their own right.
