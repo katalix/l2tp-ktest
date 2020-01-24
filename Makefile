@@ -13,6 +13,8 @@ COMMON_SOURCES 	:= $(SRCDIR)/l2tp_netlink.c
 COMMON_SOURCES 	+= $(SRCDIR)/util.c
 COMMON_LIBS	:= nl-genl-3 nl-3 pthread
 
+OPT_NO_SYZBOT_APPS := 0
+
 $(shell mkdir -p $(DEPDIR) > /dev/null)
 $(shell $(SRCDIR)/syzbot/bootstrap.sh > $(SRCDIR)/syzbot/syzbot.mk)
 
@@ -51,7 +53,9 @@ datapath_verify_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,datapath_verify))
 
 # syzbot reproducers
+ifeq ($(OPT_NO_SYZBOT_APPS),0)
 include $(SRCDIR)/syzbot/syzbot.mk
+endif
 
 all: $(TARGETS) l2tp-ktest.tgz
 
