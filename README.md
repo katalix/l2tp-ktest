@@ -1,16 +1,52 @@
 # L2TP KTest
 
-l2tp_ktest is a suite of tools for testing the Linux kernel L2TP dataplane.
+l2tp-ktest is a suite of tools for testing the Linux kernel
+[L2TP](https://en.wikipedia.org/wiki/Layer_2_Tunneling_Protocol) dataplane.
+
+The suite is designed to exercise the
+[kernel's APIs](https://github.com/torvalds/linux/blob/master/Documentation/networking/l2tp.txt)
+for creating and destroying tunnel and session contexts, to validate the data path
+itself by sending and receiving session data, and to provide some stress tests to
+attempt to trigger race conditions or
+[oopses](https://en.wikipedia.org/wiki/Linux_kernel_oops) in the kernel itself.
 
 Most of the tools are written in C.  A shell script, l2tp_ktest, combines most
 of the tools into a test suite, and this is the easiest way to run them.
 
+## Features
+
+Currently l2tp-ktest provides tests for the following kernel features:
+
+* [L2TPv2 (RFC2661)](https://tools.ietf.org/html/rfc2661)
+* [L2TPv3 (RFC3931)](https://tools.ietf.org/html/rfc3931)
+* AF_INET and AF_INET6 tunnel addresses
+* UDP and L2TPIP tunnel encapsulation
+* managed and unmanaged/static tunnel instances
+* data path validation for PPP pseudowires
+
+At present the following is unsupported:
+
+* data path validation for Ethernet pseudowires
+
+And the following tests are limited in scope:
+
+* the stress-test applications don't cover a lot of scenarios
+* the data path tests don't cover the various data path options such as UDP checksums,
+  fragmentation/MTU, cookies, sequence numbers, or L2-Specific Sublayer
+
 ## Building the test suite
 
-The test tools are built using a simple Makefile.  Build and test machines will
-need to have libnl-3 installed.
+The test tools are built using a simple Makefile.
 
-To build:
+Build requirements are:
+
+* GNU make,
+* the GCC C toolchain,
+* Linux system headers for L2TP,
+* development headers and runtime libraries for [libnl](https://www.infradead.org/~tgr/libnl/),
+  specifically libnl-3 and libnl-genl-3
+
+To build the tools:
 
     $ make
 
@@ -24,18 +60,23 @@ more usually copied to a test machine or VM for execution there.
 
 The test machine will require:
 
+* the GNU bash shell,
 * root permissions to run the test suite,
-* libnl-3,
+* runtime libraries for libnl-3 and libnl-genl-3
 * a version of [iproute2](https://github.com/shemminger/iproute2) supporting the
   l2tp subcommand: most Linux distributions include this by default
 
-You can then run the test suite using the script:
+You can then run the test suite using the l2tp_ktest bash script.  The script offers
+various options to control what it does: you can see documentation for these by
+passing it the -h command line option.
+
+Alternatively, to simply run the suite of tests, execute the script with no arguments:
 
     $ sudo ./l2tp_ktest
 
-This will iterate through all the unit tests and generate a summary of results
-at the end.  Pay attention to any failing test cases, and watch a serial console
-for any kernel oopses.
+The script will probe the system for its capabilities prior to running the tests,
+and will exclude any tests which aren't supported by the system.  For example,
+tests using AF_INET6 addresses won't be run on a system that lacks IPv6 support.
 
 ## Running individual components
 
@@ -47,15 +88,27 @@ The test tools can be run on their own as well as by the test script:
   test the data path,
 * tunl_delete_race and tunl_query_race are designed to provoke race conditions
   in the kernel,
-* the syzbot_* applications are [sysbot](https://github.com/google/syzkaller)
+* the syzbot applications are [sysbot](https://github.com/google/syzkaller)
   reproducers for bugs reported to the [netdev](http://vger.kernel.org/vger-lists.html#netdev)
   mailing list for the L2TP subsystem.
 
 All tools except the syzbot reproducers offer interactive usage information via.
 the -h command line option.
 
-The syzbot reproducer applications generally just need running to try to provoke the
-bug associated with them.  They typically run a never-ending loop.
+### syszbot reproducers
+
+The [syzkaller/syzbot](https://github.com/google/syzkaller) project fuzz tests the
+Linux kernel's system call interface to try to provoke oopses.  These are then reported
+to the [netdev](http://vger.kernel.org/vger-lists.html#netdev) mailing list.
+
+l2tp-ktest contains some historical syzbot reproducer applications which have
+been reported to the mailing list: the src/syzbot directory contains the details of
+these reports for reference.
+
+Since the syzbot reproducer applications generally run in a never-ending loop, they
+are not directly executed by l2tp_ktest.
+
+Instead, run them directly, watching a serial console for any oopses.
 
 ## Environmental variables
 
