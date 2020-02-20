@@ -660,6 +660,9 @@ static void *tunl_racing_threads__thread_wrapper(void *dptr)
     racing_threads_cb_fn_t cb = NULL;
     void *cb_dptr = NULL;
 
+    pthread_mutex_lock(&rt->lock);
+    pthread_mutex_unlock(&rt->lock);
+
     if (pthread_equal(rt->t1.thread, pthread_self())) {
         cb = rt->t1.cb;
         cb_dptr = rt->t1.dptr;
@@ -667,9 +670,6 @@ static void *tunl_racing_threads__thread_wrapper(void *dptr)
         cb = rt->t2.cb;
         cb_dptr = rt->t2.dptr;
     } else assert(!"Failed to determine thread resources");
-
-    pthread_mutex_lock(&rt->lock);
-    pthread_mutex_unlock(&rt->lock);
 
     return cb(rt->id, &ti, cb_dptr);
 }
