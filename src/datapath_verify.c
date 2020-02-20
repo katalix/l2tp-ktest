@@ -159,20 +159,21 @@ static void do_create_session(struct session_options *so)
 
 static void gen_prng_buf(uint32_t tid, uint32_t sid, char *out, size_t nbytes)
 {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    size_t i;
+
     assert(tid > 0);
     assert(sid > 0);
     assert(nbytes > 0);
     assert(out);
-    struct random_data rb = {};
-    char statebuf[64];
-    size_t i;
-    initstate_r(tid+sid, statebuf, sizeof(statebuf), &rb);
-    srandom_r(tid+sid, &rb);
+
+    pthread_mutex_lock(&lock);
+    srandom(tid+sid);
     for (i = 0; i < nbytes; i++) {
-        int32_t rnd;
-        random_r(&rb, &rnd);
+        long rnd = random();
         out[i] = rnd;
     }
+    pthread_mutex_unlock(&lock);
 }
 
 static void gen_data_pkt(uint32_t tid, uint32_t sid, char *out, size_t nbytes)
