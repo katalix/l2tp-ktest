@@ -37,6 +37,7 @@ struct l2tp_options {
     uint32_t ptid;
     uint32_t sid;
     uint32_t psid;
+    char ifname[16];
 };
 
 /*

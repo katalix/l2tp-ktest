@@ -504,6 +504,7 @@ do_pppox_connect:
                 .debug = opt_debug ? 0xff : 0,
                 .mtu = 1300,
                 .pw_type = options->pseudowire,
+                .ifname = options->ifname[0] ? &options->ifname[0] : NULL,
                 /* leave everything else as default */
             };
             ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &scfg);
@@ -518,6 +519,18 @@ do_pppox_connect:
             assert(!"Unhandled switch case");
             ret = -ENOSYS;
         break;
+    }
+
+    if (ret == 0) {
+        struct l2tp_session_data sd = {};
+        ret = l2tp_nl_session_get(options->tid, options->sid, &sd);
+        if (ret == 0) {
+            log("session %u/%u uses %s\n", options->tid, options->sid, sd.ifname ? sd.ifname : "?");
+            if (sd.ifname) {
+                strncpy(&options->ifname[0], sd.ifname, sizeof(options->ifname) - 1);
+                free(sd.ifname);
+            }
+        }
     }
     return ret;
 }
