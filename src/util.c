@@ -502,7 +502,7 @@ do_pppox_connect:
         case L2TP_NETLINK_API: {
             struct l2tp_session_nl_config scfg = {
                 .debug = opt_debug ? 0xff : 0,
-                .mtu = 1300,
+                .mtu = options->mtu ? options->mtu : 1300,
                 .pw_type = options->pseudowire,
                 .ifname = options->ifname[0] ? &options->ifname[0] : NULL,
                 /* leave everything else as default */
