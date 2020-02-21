@@ -84,8 +84,8 @@ static char *ss_to_str(struct sockaddr_storage *ss)
     port = ss_get_port(ss);
     inet_ntop(ss->ss_family, ss_get_addr(ss, &nbytes), tmp, sizeof(tmp));
     if (port) {
-        if (ss->ss_family == AF_INET) snprintf(addr_str, sizeof(addr_str), "%s:%" PRIu16, tmp, port);
-        else snprintf(addr_str, sizeof(addr_str), "[%s]:%" PRIu16, tmp, port);
+        if (ss->ss_family == AF_INET) snprintf(addr_str, sizeof(addr_str), "%s:%" PRIu16, tmp, ntohs(port));
+        else snprintf(addr_str, sizeof(addr_str), "[%s]:%" PRIu16, tmp, ntohs(port));
     } else snprintf(addr_str, sizeof(addr_str), "%s", tmp);
 
     return addr_str;
