@@ -505,8 +505,15 @@ do_pppox_connect:
                 .mtu = options->mtu ? options->mtu : 1300,
                 .pw_type = options->pseudowire,
                 .ifname = options->ifname[0] ? &options->ifname[0] : NULL,
+                .cookie_len = options->cookie_len,
+                .peer_cookie_len = options->peer_cookie_len,
                 /* leave everything else as default */
             };
+            assert(options->cookie_len <= sizeof(scfg.cookie));
+            memcpy(&scfg.cookie[0], &options->cookie[0], options->cookie_len);
+            assert(options->peer_cookie_len <= sizeof(scfg.peer_cookie));
+            memcpy(&scfg.peer_cookie[0], &options->peer_cookie[0], options->peer_cookie_len);
+
             ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &scfg);
             if (ret) return ret;
 

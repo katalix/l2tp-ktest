@@ -32,6 +32,10 @@ struct l2tp_options {
     int protocol;
     enum l2tp_api_session_pw_type pseudowire;
     uint16_t mtu;
+    uint8_t cookie_len;
+    uint8_t cookie[8];
+    uint8_t peer_cookie_len;
+    uint8_t peer_cookie[8];
     struct addr peer_addr;
     struct addr local_addr;
     uint32_t tid;
