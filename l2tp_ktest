@@ -224,13 +224,32 @@ v2_tunl_check()
 }
 
 # $1 -- L2TP version
-# $2 -- API
-# $3 -- family
-# $4 -- encap
-# $5 -- pseudowire
+# $2 -- family
+# $3 -- encap
+# $4 -- pseudowire
+# $5 -- cookie_len
 session_data_check()
 {
-    OPT_QUIET=1 check $(dirname $0)/datapath_verify -A -v $1 -c $2 -d $2 -f $3 -e $4 -p $5 -t 2 -s 10
+    OPT_QUIET=1 check $(dirname $0)/sess_data.sh -t datapath $@
+}
+
+# $1 -- family
+# $2 -- encap
+# $3 -- pseudowire
+# $4 -- cookie_len
+# $5 -- bad_cookie_len
+cookie_mismatch_check()
+{
+    OPT_QUIET=1 check $(dirname $0)/sess_data.sh -t cookie_mismatch $@
+}
+
+# $1 -- L2TP version
+# $2 -- family
+# $3 -- encap
+# $4 -- pseudowire
+data_shutdown_check()
+{
+    OPT_QUIET=1 check $(dirname $0)/sess_data.sh -t data_shutdown $@
 }
 
 #
@@ -316,29 +335,79 @@ tc_race_query()
     check test $(count_tunnels) -eq 0
 }
 
-# Session data, L2TPv2
-tc_data_v2_soapi_inet_udp_ppp() { session_data_check 2 socket inet udp ppp; }
-tc_data_v2_netlink_inet_udp_ppp() { session_data_check 2 netlink inet udp ppp; }
-if test $HAVE_IPV6 -eq 1
-then
-    tc_data_v2_soapi_inet6_udp_ppp() { session_data_check 2 socket inet6 udp ppp; }
-    tc_data_v2_netlink_inet6_udp_ppp() { session_data_check 2 netlink inet6 udp ppp; }
-fi
+tc_data_v2_inet_udp_ppp() { session_data_check 2 inet udp ppp 0; }
 
-# Session data, L2TPv3
-tc_data_v3_netlink_inet_udp_ppp() { session_data_check 3 netlink inet udp ppp; }
-if test $HAVE_IPV6
-then
-    tc_data_v3_netlink_inet_ip_ppp() { session_data_check 3 netlink inet ip ppp; }
-fi
+tc_data_v3_inet_udp_ppp() { session_data_check 3 inet udp ppp 0; }
+tc_data_v3_inet_udp_ppp_cookie4() { session_data_check 3 inet udp ppp 4; }
+tc_data_v3_inet_udp_ppp_cookie8() { session_data_check 3 inet udp ppp 8; }
+
+tc_data_v3_inet_udp_eth() { session_data_check 3 inet udp eth 0; }
+tc_data_v3_inet_udp_eth_cookie4() { session_data_check 3 inet udp eth 4; }
+tc_data_v3_inet_udp_eth_cookie8() { session_data_check 3 inet udp eth 8; }
+
+tc_data_v3_inet_ip_ppp() { session_data_check 3 inet ip ppp 0; }
+tc_data_v3_inet_ip_ppp_cookie4() { session_data_check 3 inet ip ppp 4; }
+tc_data_v3_inet_ip_ppp_cookie8() { session_data_check 3 inet ip ppp 8; }
+
+tc_data_v3_inet_ip_eth() { session_data_check 3 inet ip eth 0; }
+tc_data_v3_inet_ip_eth_cookie4() { session_data_check 3 inet ip eth 4; }
+tc_data_v3_inet_ip_eth_cookie8() { session_data_check 3 inet ip eth 8; }
+
+tc_cookie_mismatch_v3_inet_udp_cookie4() { cookie_mismatch_check inet udp eth 4 4; }
+tc_cookie_mismatch_v3_inet_udp_cookie8() { cookie_mismatch_check inet udp eth 8 8; }
+tc_cookie_mismatch_v3_inet_udp_no_peer_cookie() { cookie_mismatch_check inet udp eth 0 4; }
+
+tc_cookie_mismatch_v3_inet_ip_cookie4() { cookie_mismatch_check inet ip eth 4 4; }
+tc_cookie_mismatch_v3_inet_ip_cookie8() { cookie_mismatch_check inet ip eth 8 8; }
+tc_cookie_mismatch_v3_inet_ip_no_peer_cookie() { cookie_mismatch_check inet ip eth 0 4; }
+
+tc_data_shutdown_v2_inet_udp_ppp() { data_shutdown_check 2 inet udp ppp; }
+
+tc_data_shutdown_v3_inet_udp_ppp() { data_shutdown_check 3 inet udp ppp; }
+tc_data_shutdown_v3_inet_ip_ppp() { data_shutdown_check 3 inet ip ppp; }
+tc_data_shutdown_v3_inet_udp_eth() { data_shutdown_check 3 inet udp eth; }
+tc_data_shutdown_v3_inet_ip_eth() { data_shutdown_check 3 inet ip eth; }
+
 if test $HAVE_IPV6 -eq 1
 then
-    tc_data_v3_netlink_inet6_udp_ppp() { session_data_check 3 netlink inet6 udp ppp; }
+    tc_data_v2_inet6_udp_ppp() { session_data_check 2 inet6 udp ppp 0; }
+
+    tc_data_v3_inet6_udp_ppp() { session_data_check 3 inet6 udp ppp 0; }
+    tc_data_v3_inet6_udp_ppp_cookie4() { session_data_check 3 inet6 udp ppp 4; }
+    tc_data_v3_inet6_udp_ppp_cookie8() { session_data_check 3 inet6 udp ppp 8; }
+
+    tc_data_v3_inet6_udp_eth() { session_data_check 3 inet6 udp eth 0; }
+    tc_data_v3_inet6_udp_eth_cookie4() { session_data_check 3 inet6 udp eth 4; }
+    tc_data_v3_inet6_udp_eth_cookie8() { session_data_check 3 inet6 udp eth 8; }
+
+    tc_cookie_mismatch_v3_inet6_udp_cookie4() { cookie_mismatch_check inet6 udp eth 4 4; }
+    tc_cookie_mismatch_v3_inet6_udp_cookie8() { cookie_mismatch_check inet6 udp eth 8 8; }
+    tc_cookie_mismatch_v3_inet6_udp_no_peer_cookie() { cookie_mismatch_check inet6 udp eth 0 4; }
+
+    tc_data_shutdown_v2_inet6_udp_ppp() { data_shutdown_check 2 inet6 udp ppp; }
+
+    tc_data_shutdown_v3_inet6_udp_ppp() { data_shutdown_check 3 inet6 udp ppp; }
+    tc_data_shutdown_v3_inet6_udp_eth() { data_shutdown_check 3 inet6 udp eth; }
+
     if test $HAVE_L2TPIP_IPV6 -eq 1
     then
-        tc_data_v3_netlink_inet6_ip_ppp() { session_data_check 3 netlink inet6 ip ppp; }
+        tc_data_v3_inet6_ip_ppp() { session_data_check 3 inet6 ip ppp 0; }
+        tc_data_v3_inet6_ip_ppp_cookie4() { session_data_check 3 inet6 ip ppp 4; }
+        tc_data_v3_inet6_ip_ppp_cookie8() { session_data_check 3 inet6 ip ppp 8; }
+
+        tc_data_v3_inet6_ip_eth() { session_data_check 3 inet6 ip eth 0; }
+        tc_data_v3_inet6_ip_eth_cookie4() { session_data_check 3 inet6 ip eth 4; }
+        tc_data_v3_inet6_ip_eth_cookie8() { session_data_check 3 inet6 ip eth 8; }
+
+        tc_cookie_mismatch_v3_inet6_ip_cookie4() { cookie_mismatch_check inet6 ip eth 4 4; }
+        tc_cookie_mismatch_v3_inet6_ip_cookie8() { cookie_mismatch_check inet6 ip eth 8 8; }
+        tc_cookie_mismatch_v3_inet6_ip_no_peer_cookie() { cookie_mismatch_check inet6 ip eth 0 4; }
+    
+        tc_data_shutdown_v3_inet6_ip_ppp() { data_shutdown_check 3 inet6 ip ppp; }
+        tc_data_shutdown_v3_inet6_ip_eth() { data_shutdown_check 3 inet6 ip eth; }
     fi
 fi
+
 
 show_usage()
 {
