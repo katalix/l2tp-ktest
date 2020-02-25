@@ -18,21 +18,18 @@ PAUSE_ON_FAIL=no
 
 which ping6 > /dev/null 2>&1 && ping6=$(which ping6) || ping6=$(which ping)
 
+die() { echo "FATAL: $@" 1>&2; exit 1; }
+
 ################################################################################
 #
-log_test()
+check()
 {
     local rc=$1
     local expected=$2
-    local msg="$3"
 
-    if [ ${rc} -eq ${expected} ]; then
-        printf "TEST: %-60s  [ OK ]\n" "${msg}"
-        nsuccess=$((nsuccess+1))
-    else
+    if [ ${rc} -ne ${expected} ]; then
         ret=1
         nfail=$((nfail+1))
-        printf "TEST: %-60s  [FAIL]\n" "${msg}"
         if [ "${PAUSE_ON_FAIL}" = "yes" ]; then
             echo
             echo "hit enter to continue, 'q' to quit"
@@ -179,7 +176,7 @@ cleanup()
 
 setup_l2tp_session()
 {
-    local ip_version=$1
+    local family=$1
     local l2tp_version=$2
     local encap=$3
     local pwtype="$4"
@@ -199,10 +196,8 @@ setup_l2tp_session()
     local host_ip_2="10.1.2.1"
     local l2tp_ip_1="172.16.1.1"
     local l2tp_ip_2="172.16.1.2"
-    local family_arg=""
 
-    if test $ip_version -eq 6; then
-        family_arg="-f inet6"
+    if test $family = "inet6"; then
         host_ip_1="2001:db8:1::1"
         host_ip_2="2001:db8:2::1"
         l2tp_ip_1="fc00:1::1"
@@ -218,7 +213,7 @@ setup_l2tp_session()
     #
     test $cookie_len -eq 4 && cookie_arg="-k $cookie4_1 -K $cookie4_2"
     test $cookie_len -eq 8 && cookie_arg="-k $cookie8_1 -K $cookie8_2"
-    run_cmd host-1 ./sess_dataif $family_arg -L ${host_ip_1}/${port_1} -P ${host_ip_2}/${port_2} -v $l2tp_version -e $encap -p $pwtype $cookie_arg $timeout_arg &
+    run_cmd host-1 ./sess_dataif -f $family -L ${host_ip_1}/${port_1} -P ${host_ip_2}/${port_2} -v $l2tp_version -e $encap -p $pwtype $cookie_arg $timeout_arg &
     wait_file_contains /tmp/l2tp-ktest-sess-dataif-s 0.1 10 $ifname
 
     ip -netns host-1 link set dev $ifname up
@@ -234,7 +229,7 @@ setup_l2tp_session()
     test $cookie_len -eq 0 -a -n "${bad_cookie}" && cookie_arg="-k $cookie4_2"
     test $cookie_len -eq 4 && cookie_arg="-k $cookie4_2 -K $cookie4_1"
     test $cookie_len -eq 8 && cookie_arg="-k $cookie8_2 -K $cookie8_1"
-    run_cmd host-2 ./sess_dataif -C $family_arg -L ${host_ip_2}/${port_2} -P ${host_ip_1}/${port_1} -v $l2tp_version -e $encap -p $pwtype $cookie_arg $timeout_arg &
+    run_cmd host-2 ./sess_dataif -C -f $family -L ${host_ip_2}/${port_2} -P ${host_ip_1}/${port_1} -v $l2tp_version -e $encap -p $pwtype $cookie_arg $timeout_arg &
     wait_file_contains /tmp/l2tp-ktest-sess-dataif-c 0.1 10 $ifname
 
     ip -netns host-2 link set dev $ifname up
@@ -243,7 +238,7 @@ setup_l2tp_session()
     #
     # add routes to loopback addresses
     #
-    if test $ip_version -eq 6; then
+    if test $family = "inet6"; then
         ip -netns host-1 -6 ro add fc00:101::2/128 via ${l2tp_ip_2}
         ip -netns host-2 -6 ro add fc00:101::1/128 via ${l2tp_ip_1}
     else
@@ -282,13 +277,13 @@ setup()
 
 run_ping()
 {
-    local ip_version=$1
+    local family=$1
     local pktsize=$2
     local size_arg=""
 
     test $pktsize -eq 0 || size_arg="-s $pktsize"
 
-    if test $ip_version -eq 4; then
+    if test $family = "inet"; then
         run_cmd host-1 ping -c1 -w1 ${size_arg} -I 172.16.101.1 172.16.101.2
     else
         run_cmd host-1 ${ping6} -c1 -w1 ${size_arg} -I fc00:101::1 fc00:101::2
@@ -297,33 +292,30 @@ run_ping()
 
 test_l2tp()
 {
-    local ip_version="$1"
-    local l2tp_version="$2"
+    local l2tp_version="$1"
+    local family="$2"
     local encap="$3"
     local pwtype="$4"
     local cookie_len="$5"
-    local timeout="$6"
-    local desc="$7"
 
     setup
     set -e
-    setup_l2tp_session ${ip_version} $l2tp_version $encap $pwtype $cookie_len $timeout
+    setup_l2tp_session $family $l2tp_version $encap $pwtype $cookie_len 0
     set +e
 
-    run_ping $ip_version 0
-    log_test $? 0 "${desc}"
-    run_ping $ip_version 1600
-    log_test $? 0 "${desc} (large packets)"
-    cleanup
+    run_ping $family 0
+    check $? 0
+    run_ping $family 1600
+    check $? 0
 }
 
 test_l2tpv3_cookie_mismatch()
 {
-    local ip_version=$1
+    local family=$1
     local encap=$2
-    local cookie_len=$3
-    local bad_cookie_len=$4
-    local desc="$5"
+    local pwtype=$3
+    local cookie_len=$4
+    local bad_cookie_len=$5
 
     local bad_cookie=""
     test $bad_cookie_len -eq 4 && bad_cookie="11112222"
@@ -331,17 +323,16 @@ test_l2tpv3_cookie_mismatch()
 
     setup
     set -e
-    setup_l2tp_session ${ip_version} 3 $encap eth $cookie_len 0 $bad_cookie
+    setup_l2tp_session ${family} 3 $encap $pwtype $cookie_len 0 $bad_cookie
     set +e
 
-    if test $ip_version -eq 4
+    if test $family = "inet"
     then
         run_cmd host-1 ping -c1 -w1 -I 172.16.101.1 172.16.101.2
     else
         run_cmd host-1 ${ping6} -c1 -w1 ${size_arg} -I fc00:101::1 fc00:101::2
     fi
-    log_test $? 1 "cookie mismatch ${desc}"
-    cleanup
+    check $? 1
 }
 
 # To test busy shutdown, the session interface is torn down after 2s
@@ -351,21 +342,20 @@ test_l2tpv3_cookie_mismatch()
 # successfully cleaned up and the test is deemed to have succeeded.
 test_l2tp_busy_shutdown()
 {
-    local ip_version="$1"
-    local l2tp_version="$2"
+    local l2tp_version="$1"
+    local family="$2"
     local encap="$3"
     local pwtype="$4"
-    local desc="$5"
     local ifname=""
 
     test "$pwtype" = "ppp" && ifname="ppp0" || ifname="l2tpeth0"
 
     setup
     set -e
-    setup_l2tp_session ${ip_version} $l2tp_version $encap $pwtype 0 2
+    setup_l2tp_session ${family} $l2tp_version $encap $pwtype 0 2
     set +e
 
-    if test $ip_version -eq 4
+    if test $family = "inet"
     then
         run_cmd host-1 ping -q -f -w3 -I 172.16.101.1 172.16.101.2
     else
@@ -376,72 +366,36 @@ test_l2tp_busy_shutdown()
 
     cleanup
     run_cmd host-1 true || run_cmd host-2 true || run_cmd router true
-    log_test $? 1 "busy shutdown ${desc}"
-}
-
-run_tests()
-{
-    cleanup
-    test_l2tp 4 2 udp ppp 0 0 "L2TPv2 IPv4"
-    test_l2tp 4 3 udp eth 0 0 "L2TPv3 IPv4 UDP eth"
-    test_l2tp 4 3 ip eth 0 0 "L2TPv3 IPv4 IP eth"
-    test_l2tp 4 3 udp ppp 0 0 "L2TPv3 IPv4 UDP ppp"
-    test_l2tp 4 3 ip ppp 0 0 "L2TPv3 IPv4 IP ppp"
-    test_l2tp 4 3 udp eth 4 0 "L2TPv3 IPv4 UDP eth, 4-byte cookie"
-    test_l2tp 4 3 udp eth 8 0 "L2TPv3 IPv4 UDP eth, 8-byte cookie"
-    test_l2tp 6 2 udp ppp 0 0 "L2TPv2 IPv6"
-    test_l2tp 6 3 udp ppp 0 0 "L2TPv3 IPv6 UDP ppp"
-    test_l2tp 6 3 udp eth 0 0 "L2TPv3 IPv6 UDP eth"
-    test_l2tp 6 3 udp eth 4 0 "L2TPv3 IPv6 UDP eth, 4-byte cookie"
-    test_l2tp 6 3 udp eth 8 0 "L2TPv3 IPv6 UDP eth, 8-byte cookie"
-    test_l2tp 4 3 ip ppp 0 0 "L2TPv3 IPv4 IP ppp"
-    test_l2tp 4 3 ip eth 0 0 "L2TPv3 IPv4 IP eth"
-    test_l2tp 4 3 ip eth 4 0 "L2TPv3 IPv4 IP eth, 4-byte cookie"
-    test_l2tp 4 3 ip eth 8 0 "L2TPv3 IPv4 IP eth, 8-byte cookie"
-    test_l2tp 6 3 ip ppp 0 0 "L2TPv3 IPv6 IP ppp"
-    test_l2tp 6 3 ip eth 0 0 "L2TPv3 IPv6 IP eth"
-    test_l2tp 6 3 ip eth 4 0 "L2TPv3 IPv6 IP eth, 4-byte cookie"
-    test_l2tp 6 3 ip eth 8 0 "L2TPv3 IPv6 IP eth, 8-byte cookie"
-    test_l2tpv3_cookie_mismatch 4 udp 4 4 "L2TPv3 IPv4 UDP 4-byte cookie"
-    test_l2tpv3_cookie_mismatch 6 udp 4 4 "L2TPv3 IPv6 UDP 4-byte cookie"
-    test_l2tpv3_cookie_mismatch 4 ip 4 4 "L2TPv3 IPv4 IP 4-byte cookie"
-    test_l2tpv3_cookie_mismatch 6 ip 4 4 "L2TPv3 IPv6 IP 4-byte cookie"
-    test_l2tpv3_cookie_mismatch 4 udp 4 8 "L2TPv3 IPv4 UDP 8-byte cookie"
-    test_l2tpv3_cookie_mismatch 6 udp 4 8 "L2TPv3 IPv6 UDP 8-byte cookie"
-    test_l2tpv3_cookie_mismatch 4 ip 4 8 "L2TPv3 IPv4 IP 8-byte cookie"
-    test_l2tpv3_cookie_mismatch 6 ip 4 8 "L2TPv3 IPv6 IP 8-byte cookie"
-    test_l2tpv3_cookie_mismatch 4 udp 0 4 "L2TPv3 IPv4 UDP no cookie at peer"
-    test_l2tpv3_cookie_mismatch 6 udp 0 4 "L2TPv3 IPv6 UDP no cookie at peer"
-    test_l2tpv3_cookie_mismatch 4 ip 0 4 "L2TPv3 IPv4 IP no cookie at peer"
-    test_l2tpv3_cookie_mismatch 6 ip 0 4 "L2TPv3 IPv6 IP no cookie at peer"
-    test_l2tp_busy_shutdown 4 2 udp ppp "L2TPv2 IPv4"
-    test_l2tp_busy_shutdown 4 3 udp eth "L2TPv3 IPv4 UDP eth"
-    test_l2tp_busy_shutdown 4 3 ip eth "L2TPv3 IPv4 IP eth"
-    test_l2tp_busy_shutdown 4 3 udp ppp "L2TPv3 IPv4 UDP ppp"
-    test_l2tp_busy_shutdown 4 3 ip ppp "L2TPv3 IPv4 IP ppp"
-    test_l2tp_busy_shutdown 6 2 udp ppp "L2TPv2 IPv6"
-    test_l2tp_busy_shutdown 6 3 udp eth "L2TPv3 IPv6 UDP eth"
-    test_l2tp_busy_shutdown 6 3 ip eth "L2TPv3 IPv6 IP eth"
-    test_l2tp_busy_shutdown 6 3 udp ppp "L2TPv3 IPv6 UDP ppp"
-    test_l2tp_busy_shutdown 6 3 ip ppp "L2TPv3 IPv6 IP ppp"
+    check $? 1
 }
 
 ################################################################################
 # main
 
 declare -i nfail=0
-declare -i nsuccess=0
 
-while getopts :pv o
+testid=""
+
+while getopts pt:v o
 do
     case $o in
+        t) testid=$OPTARG;;
         p) PAUSE_ON_FAIL=yes;;
         v) VERBOSE=$(($VERBOSE + 1));;
         *) exit 1;;
     esac
 done
+shift $((OPTIND-1))
+args="$@"
 
-run_tests
+test -n "$testid" || die "TestId arg missing"
 
-printf "\nTests passed: %3d\n" ${nsuccess}
-printf "Tests failed: %3d\n"   ${nfail}
+trap cleanup EXIT
+
+case "$testid" in
+    datapath) test_l2tp $args;;
+    cookie_mismatch) test_l2tpv3_cookie_mismatch $args;;
+    data_shutdown) test_l2tp_busy_shutdown $args;;
+esac
+
+test $nfail -eq 0 || false
