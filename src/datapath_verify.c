@@ -143,7 +143,7 @@ static void do_create_session(struct session_options *so)
 
     dbg("session %u/%u -> peer %u/%u\n", so->lo.tid, so->lo.sid, so->lo.ptid, so->lo.psid);
 
-    ret = kernel_session_create(&so->lo, &so->sfd);
+    ret = kernel_session_create(&so->lo, &so->sfd, NULL);
     if (ret) die("Failed to create kernel context for session %u/%u\n", so->lo.tid, so->lo.sid);
 
     /* For PPP we expect the kernel session create to have created a session

@@ -227,7 +227,7 @@ int main(int argc, char **argv)
 
         /* Now create a session if we've been asked to */
         if (rto.do_create_session) {
-            ret = kernel_session_create(&lo, &pppsctl);
+            ret = kernel_session_create(&lo, &pppsctl, NULL);
             if (ret) die("kernel_session_create failed: %s\n", strerror(-ret));
         }
     }

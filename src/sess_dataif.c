@@ -47,6 +47,7 @@
 
 #include "l2tp_netlink.h"
 #include "util.h"
+#include "util_ppp.h"
 
 struct runtime_options {
     int is_client;
@@ -60,6 +61,7 @@ struct session_options {
     struct runtime_options ro;
     struct tunnel_options *to;
     int sfd;
+    int pppfd;
 };
 
 struct tunnel_options {
@@ -159,17 +161,18 @@ static void do_create_session(struct session_options *so)
 
     dbg("session %u/%u -> peer %u/%u\n", so->lo.tid, so->lo.sid, so->lo.ptid, so->lo.psid);
 
-    ret = kernel_session_create(&so->lo, &so->sfd);
+    ret = kernel_session_create(&so->lo, &so->sfd, &so->pppfd);
     if (ret) die("Failed to create kernel context for session %u/%u\n", so->lo.tid, so->lo.sid);
 
     /* For PPP we expect the kernel session create to have created a session
-     * AF_PPPOX socket.
-     * For ETH we need to create our own raw socket to use for data transport (TODO).
+     * AF_PPPOX socket. Connect this to ppp.
+     * For ETH, there is no session socket so there is nothing more to do.
      */
     if (so->lo.pseudowire == L2TP_API_SESSION_PW_TYPE_ETH) {
         assert(so->sfd < 0);
     } else if (so->lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP) {
         assert(so->sfd >= 0);
+        if (so->pppfd < 0) die("Failed to establish ppp\n");
     }
 
     fprintf(g_status_file, "%s %u/%u to %u/%u\n", so->lo.ifname[0] ? so->lo.ifname : "?",

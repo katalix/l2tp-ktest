@@ -31,6 +31,7 @@
 #include "l2tp_netlink.h"
 #include "usl_list.h"
 #include "util.h"
+#include "util_ppp.h"
 
 bool opt_debug = false;
 bool opt_quiet = false;
@@ -482,7 +483,7 @@ int kernel_tunnel_create(int tfd, struct l2tp_options *options, int *ctlsk)
     return ret;
 }
 
-int kernel_session_create(struct l2tp_options *options, int *ctlsk)
+int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk)
 {
     assert(options);
     assert(options->create_api == L2TP_SOCKET_API || options->create_api == L2TP_NETLINK_API);
@@ -497,6 +498,13 @@ do_pppox_connect:
             if (ret >= 0) {
                 if (ctlsk) *ctlsk = ret;
                 ret = 0;
+                if (pppsk) {
+                    int unit = -1;
+                    *pppsk = ppp_generic_establish_ppp(*ctlsk, &unit);
+                    if (*pppsk >= 0 && unit >= 0) {
+                        snprintf(&options->ifname[0], sizeof(options->ifname), "ppp%d", unit);
+                    }
+                }
             }
         break;
         case L2TP_NETLINK_API: {
@@ -529,15 +537,17 @@ do_pppox_connect:
     }
 
     if (ret == 0) {
-        struct l2tp_session_data sd = {};
-        ret = l2tp_nl_session_get(options->tid, options->sid, &sd);
-        if (ret == 0) {
-            log("session %u/%u uses %s\n", options->tid, options->sid, sd.ifname ? sd.ifname : "?");
-            if (sd.ifname) {
-                strncpy(&options->ifname[0], sd.ifname, sizeof(options->ifname) - 1);
-                free(sd.ifname);
+        if (!options->ifname[0]) {
+            struct l2tp_session_data sd = {};
+            ret = l2tp_nl_session_get(options->tid, options->sid, &sd);
+            if (ret == 0) {
+                if (sd.ifname) {
+                    strncpy(&options->ifname[0], sd.ifname, sizeof(options->ifname) - 1);
+                    free(sd.ifname);
+                }
             }
         }
+        log("session %u/%u uses %s\n", options->tid, options->sid, options->ifname[0] ? options->ifname : "?");
     }
     return ret;
 }

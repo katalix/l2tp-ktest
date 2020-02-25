@@ -295,9 +295,11 @@ int kernel_tunnel_create(int tfd, struct l2tp_options *options, int *ctlsk);
  * socket API or the netlink API as requested by the supplied options.
  *  @param  options     options governing tunnel creation
  *  @param  ctlsk       variable to receive control socket for pppol2tp/socket API
+ *  @param  pppsk       variable to receive ppp socket if ppp session. May be null
+ *                      if ppp data socket not required.
  *  @return             0 on success, negative errno otherwise
  */
-int kernel_session_create(struct l2tp_options *options, int *ctlsk);
+int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk);
 
 /**
  * Generate a bounded random number using random(3).
