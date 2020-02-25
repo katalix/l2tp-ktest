@@ -47,11 +47,6 @@ kcreate_SRCS := $(SRCDIR)/kcreate.c $(COMMON_SOURCES)
 kcreate_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,kcreate))
 
-# datapath_verify
-datapath_verify_SRCS := $(SRCDIR)/datapath_verify.c $(COMMON_SOURCES)
-datapath_verify_LIBS := $(COMMON_LIBS)
-$(eval $(call buildapp,datapath_verify))
-
 # sess_dataif
 sess_dataif_SRCS := $(SRCDIR)/sess_dataif.c $(COMMON_SOURCES)
 sess_dataif_LIBS := $(COMMON_LIBS)
