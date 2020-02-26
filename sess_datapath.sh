@@ -22,20 +22,34 @@ die() { echo "FATAL: $@" 1>&2; exit 1; }
 
 ################################################################################
 #
+_check_failed()
+{
+    nfail=$((nfail+1))
+    if [ "${PAUSE_ON_FAIL}" = "yes" ]; then
+        echo
+        echo "hit enter to continue, 'q' to quit"
+        read a
+        [ "$a" = "q" ] && exit 1
+    fi
+}
+
 check()
 {
     local rc=$1
     local expected=$2
 
     if [ ${rc} -ne ${expected} ]; then
-        ret=1
-        nfail=$((nfail+1))
-        if [ "${PAUSE_ON_FAIL}" = "yes" ]; then
-            echo
-            echo "hit enter to continue, 'q' to quit"
-            read a
-            [ "$a" = "q" ] && exit 1
-        fi
+        _check_failed
+    fi
+}
+
+check_not()
+{
+    local rc=$1
+    local not_expected=$2
+
+    if [ ${rc} -eq ${not_expected} ]; then
+        _check_failed
     fi
 }
 
@@ -366,7 +380,7 @@ test_l2tp_busy_shutdown()
 
     cleanup
     run_cmd host-1 true || run_cmd host-2 true || run_cmd router true
-    check $? 1
+    check_not $? 0
 }
 
 ################################################################################
