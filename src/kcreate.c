@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * file: kcreate.c
  *
  * A tool for creating kernel contexts for L2TP tunnels and sessions.

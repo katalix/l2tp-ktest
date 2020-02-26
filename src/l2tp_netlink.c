@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * file: l2tp_netlink.c
  *
  * L2TP-specific netlink wrappers using libnl.

@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * @file tunl_delete_race.c
  *
  * Race netlink tunnel delete requests with tunnel socket close(2).

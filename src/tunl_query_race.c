@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * @file tunl_query_race.c
  *
  * Race netlink tunnel get requests with tunnel socket close(2).

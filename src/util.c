@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * file: util.c
  *
  * Shared utility functions used by test applications.

@@ -1,5 +1,7 @@
 #!/bin/bash
 #
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
 # Test suite for Linux Kernel L2TP code
 #
 # Depends on iproute2 with l2tp support

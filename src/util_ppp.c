@@ -1,4 +1,6 @@
 /*
+ * SPDX-License-Identifier: BSD
+ *
  * PPP support code. Derived from pppd's sys-linux.c:
  *
  * Copyright (c) 1994-2004 Paul Mackerras. All rights reserved.
