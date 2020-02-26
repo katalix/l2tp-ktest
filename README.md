@@ -22,17 +22,15 @@ Currently l2tp-ktest provides tests for the following kernel features:
 * AF_INET and AF_INET6 tunnel addresses
 * UDP and L2TPIP tunnel encapsulation
 * managed and unmanaged/static tunnel instances
-* data path validation for PPP pseudowires
+* data path validation
+* clean session shutdown while passing data
+* L2TPv3 cookie validation
 
-At present the following is unsupported:
-
-* data path validation for Ethernet pseudowires
-
-And the following tests are limited in scope:
+The following tests are limited in scope:
 
 * the stress-test applications don't cover a lot of scenarios
-* the data path tests don't cover the various data path options such as UDP checksums,
-  fragmentation/MTU, cookies, sequence numbers, or L2-Specific Sublayer
+* the data path tests don't cover some data path options: UDP checksums,
+  sequence numbers, or L2-Specific Sublayer
 
 ## Building the test suite
 
@@ -88,11 +86,11 @@ tests using AF_INET6 addresses won't be run on a system that lacks IPv6 support.
 
 The test tools can be run on their own as well as by the test script:
 
-* kcreate can be used to create tunnel and session instances in the kernel,
+* *kcreate* can be used to create tunnel and session instances in the kernel,
   and to explore kernel context lifetimes,
-* datapath_verify can be used to send data over L2TP sessions in order to
-  test the data path,
-* tunl_delete_race and tunl_query_race are designed to provoke race conditions
+* *sess_dataif* can be used to create a managed session with it associated
+  netdevice which can be used to test the data path. Two instances are required.
+* *tunl_delete_race* and *tunl_query_race* are designed to provoke race conditions
   in the kernel,
 * the syzbot applications are [sysbot](https://github.com/google/syzkaller)
   reproducers for bugs reported to the [netdev](http://vger.kernel.org/vger-lists.html#netdev)
