@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * @file l2tp_kapi.h
  *
  * A minimal set of Linux kernel API types.
