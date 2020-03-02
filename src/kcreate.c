@@ -123,19 +123,11 @@ int main(int argc, char **argv)
                 die("Invalid api %s\n", optarg);
             break;
         case 'f':
-            if (0 == strcmp("inet", optarg))
-                lo.family = AF_INET;
-            else if (0 == strcmp("inet6", optarg))
-                lo.family = AF_INET6;
-            else
+            if (!parse_socket_family(optarg, &lo.family))
                 die("Invalid address family %s\n", optarg);
             break;
         case 'e':
-            if (0 == strcmp("udp", optarg))
-                lo.protocol = IPPROTO_UDP;
-            else if (0 == strcmp("ip", optarg))
-                lo.protocol = IPPROTO_L2TP;
-            else
+            if (!parse_encap(optarg, &lo.protocol))
                 die("Invalid encapsulation %s\n", optarg);
             break;
         case 'p':
