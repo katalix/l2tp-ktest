@@ -319,37 +319,51 @@ then
     tc_api_v3_ip_inet6_ppp() { v3_tunl_check ip inet6 ppp; }
 fi
 
-# Tunnel delete with userspace thread races
-tc_race_delete()
+# $1 -- mode - delete or query
+# $2 -- family
+# $3 -- encap
+do_tunnel_delete_or_query_race()
 {
+    local mode="$1"
+    local family="$2"
+    local encap="$3"
     local i=
+
     check test $(count_tunnels) -eq 0
 
     for i in 1 2 3 4 5
     do
         delay_no_tunnel
-        OPT_SILENT=1 check $(dirname $0)/tunl_delete_race -c 150
+        OPT_SILENT=1 check $(dirname $0)/tunl_${mode}_race -f $family -e $encap -c 150
     done
 
     delay_no_tunnel
     check test $(count_tunnels) -eq 0
 }
+
+# Tunnel delete with userspace thread races
+if test $HAVE_UDP_ENCAP_DESTROY -eq 1
+then
+    tc_race_delete_inet_udp() { do_tunnel_delete_or_query_race delete inet udp; }
+    tc_race_delete_inet6_udp() { do_tunnel_delete_or_query_race delete inet6 udp; }
+fi
+tc_race_delete_inet_ip() { do_tunnel_delete_or_query_race delete inet ip; }
+if test $HAVE_L2TPIP_IPV6 -eq 1
+then
+    tc_race_delete_inet6_ip() { do_tunnel_delete_or_query_race delete inet6 ip; }
+fi
 
 # Tunnel query with userspace thread races
-tc_race_query()
-{
-    local i=
-    check test $(count_tunnels) -eq 0
-
-    for i in 1 2 3 4 5
-    do
-        delay_no_tunnel
-        OPT_SILENT=1 check $(dirname $0)/tunl_query_race -c 150
-    done
-
-    delay_no_tunnel
-    check test $(count_tunnels) -eq 0
-}
+if test $HAVE_UDP_ENCAP_DESTROY -eq 1
+then
+    tc_race_query_inet_udp() { do_tunnel_delete_or_query_race query inet udp; }
+    tc_race_query_inet6_udp() { do_tunnel_delete_or_query_race query inet6 udp; }
+fi
+tc_race_query_inet_ip() { do_tunnel_delete_or_query_race query inet ip; }
+if test $HAVE_L2TPIP_IPV6 -eq 1
+then
+    tc_race_query_inet6_ip() { do_tunnel_delete_or_query_race query inet6 ip; }
+fi
 
 # Datapath tests require lo interfaces configurable per namespace
 if test $HAVE_IP_NETNS -eq 1

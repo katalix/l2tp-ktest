@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "l2tp_netlink.h"
 #include "util.h"
@@ -40,20 +41,42 @@ static void show_usage(const char *myname)
    printf("Usage:    %s [options]\n", myname);
    printf("          -h    print this usage information\n");
    printf("          -c    number of tunnels to create per testcase\n");
+   printf("          -f    specify tunnel socket address family (inet or inet6: default is inet)\n");
+   printf("          -e    specify tunnel encapsulation (udp or ip: default is ip)\n");
 }
 
 int main(int argc, char **argv)
 {
     int tunnel_count = 100;
     int opt;
+    struct l2tp_options options = {
+        .l2tp_version = L2TP_API_PROTOCOL_VERSION_3,
+        .create_api = L2TP_NETLINK_API,
+        .delete_api = L2TP_NETLINK_API,
+        .family = AF_INET,
+        .protocol = IPPROTO_L2TP,
+        .pseudowire = L2TP_API_SESSION_PW_TYPE_ETH,
+        .peer_addr = { .ip = "127.0.0.1", .port = 10000 },
+        .local_addr = { .ip = "127.0.0.1", .port = 20000 },
+        .tid = 1,
+        .ptid = 1,
+    };
 
-    while ((opt = getopt(argc, argv, "hc:")) != -1) {
+    while ((opt = getopt(argc, argv, "hc:e:f:")) != -1) {
         switch(opt) {
         case 'h':
             show_usage(argv[0]);
             exit(EXIT_SUCCESS);
         case 'c':
             tunnel_count = atoi(optarg);
+            break;
+        case 'e':
+            if (!parse_encap(optarg, &options.protocol))
+                die("Invalid encapsulation %s\n", optarg);
+            break;
+        case 'f':
+            if (!parse_socket_family(optarg, &options.family))
+                die("Invalid address family %s\n", optarg);
             break;
         default:
             die("failed to parse command line args\n");
@@ -63,8 +86,13 @@ int main(int argc, char **argv)
     if (tunnel_count < 0)
         die("command line error: invalid specification for tunnel count or iterations\n");
 
+    if (options.family == AF_INET6) {
+        options.local_addr.ip = "::1";
+        options.peer_addr.ip = "::1";
+    }
+
     log("Running %i racing tunnels: expect to see netlink errors...\n", tunnel_count);
-    tunl_racing_threads(tunnel_count, NULL, 0, t_nl_close, NULL, t_sk_close, NULL);
+    tunl_racing_threads(tunnel_count, &options, 1, t_nl_close, NULL, t_sk_close, NULL);
     log("OK\n");
 
     return 0;
