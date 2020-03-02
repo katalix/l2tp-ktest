@@ -108,6 +108,7 @@ kernel_version() { echo $(( ($1 << 16) + ($2 << 8) + $3 )); }
 
 have_ipv6() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 5 0); }
 have_l2tpip_ipv6() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 8 0); }
+have_ipv6_peer() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 11 0); }
 have_udp_encap_destroy() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 9 0); }
 
 # Tunnel / session lifetimes
@@ -268,6 +269,10 @@ test $HAVE_IPV6 -eq 1 && log "Have IPv6" || log "Have no IPv6"
 have_l2tpip_ipv6 && HAVE_L2TPIP_IPV6=1 || HAVE_L2TPIP_IPV6=0
 test $HAVE_L2TPIP_IPV6 -eq 1 && log "Have L2TP IP encap IPv6" || log "Have no L2TP IP encap IPv6"
 
+# Check if IPv6 peer addresss is supported
+have_ipv6_peer && HAVE_IPV6_PEER=1 || HAVE_IPV6_PEER=0
+test $HAVE_IPV6_PEER -eq 1 && log "Have IPv6 peer_addr" || log "Have no IPv6 peer_addr"
+
 # Check whether kernel supports the UDP socket destructor hook
 have_udp_encap_destroy && HAVE_UDP_ENCAP_DESTROY=1 || HAVE_UDP_ENCAP_DESTROY=0
 test $HAVE_UDP_ENCAP_DESTROY -eq 1 && log "Have UDP encap_destroy hook" || log "Have no UDP encap_destroy hook"
@@ -374,7 +379,8 @@ tc_data_shutdown_v3_inet_ip_ppp() { data_shutdown_check 3 inet ip ppp; }
 tc_data_shutdown_v3_inet_udp_eth() { data_shutdown_check 3 inet udp eth; }
 tc_data_shutdown_v3_inet_ip_eth() { data_shutdown_check 3 inet ip eth; }
 
-if test $HAVE_IPV6 -eq 1
+# Datapath tests require ip addr add <local-addr> peer <peer-addr> support
+if test $HAVE_IPV6_PEER -eq 1
 then
     tc_data_v2_inet6_udp_ppp() { session_data_check 2 inet6 udp ppp 0; }
 
