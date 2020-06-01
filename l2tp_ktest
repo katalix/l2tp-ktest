@@ -9,6 +9,7 @@
 
 readonly KMEMLEAK=/sys/kernel/debug/kmemleak
 
+DO_KMODREFLEAK_CHECK=0
 DO_KMEMLEAK_CHECK=0
 TESTCASES=
 CHECK_COUNT=0
@@ -21,10 +22,36 @@ err() { log "ERROR: $@" 1>&2; false; }
 die() { log "FATAL: $@" 1>&2; exit 1; }
 dbg() { test $VERBOSE -ne 0 && log "$@"; }
 
+kmodrefleak_setup()
+{
+    if test 1 -eq $DO_KMODREFLEAK_CHECK -o "$1" = "force"
+    then
+        mkdir -p /tmp/l2tp-ktest
+        lsmod | grep l2tp > /tmp/l2tp-ktest/before
+    fi
+}
+
+kmodrefleak_check()
+{
+    ret=0
+    if test 1 -eq $DO_KMODREFLEAK_CHECK -o "$1" = "force"
+    then
+        # wait for netdev shutdown grace period before testing module refcounts
+        sleep 2
+        cd /tmp/l2tp-ktest
+        lsmod | grep l2tp > after
+        diff -u before after || ret=1
+        rm -f before after
+        cd -
+    fi
+    return $ret
+}
+
 runtest()
 {
     local ret=0
 
+    kmodrefleak_setup
     kmemleak_clear
     type pre_$1 &> /dev/null && pre_$1
 
@@ -37,6 +64,7 @@ runtest()
         cat $KMEMLEAK
     }
 
+    test $ret -eq 0 && kmodrefleak_check || ret=1
     return $ret
 }
 
@@ -443,6 +471,12 @@ then
     fi
 fi
 
+kmodrefleak_final_check()
+{
+    local ret=0
+    kmodrefleak_check force || ret=1
+    return $ret
+}
 
 show_usage()
 {
@@ -453,6 +487,7 @@ show_usage()
         -h  print this usage information
         -l  list available tests
         -k  enable kmemleak checking
+        -m  enable kernel module refcount leak checking
         -e  exit on first test failure
         -t  specify testcases to run (e.g. -t "tc_api_v3_ip_inet_ppp tc_api_v3_ip_inet6_ppp")
         -v  log verbose debug
@@ -476,12 +511,13 @@ show_tests()
 #
 TESTCASES=$(compgen -A function | grep ^tc_)
 
-while getopts "hlkevt:" opt
+while getopts "hlkmevt:" opt
 do
     case $opt in
     h) show_usage; exit 0;;
     l) show_tests; exit 0;;
     k) DO_KMEMLEAK_CHECK=1;;
+    m) DO_KMODREFLEAK_CHECK=1;;
     e) EXIT_ON_FIRST_ERROR=1;;
     v) VERBOSE=1;;
     t) TESTCASES=$OPTARG;;
@@ -505,6 +541,14 @@ do
     modprobe $m
 done
 
+# If kmodrefleak isn't enabled, set it up so that
+# kmodrefleak_final_check reports any leaks after running all other
+# tests.
+if test 0 -eq $DO_KMODREFLEAK_CHECK
+then
+    kmodrefleak_setup force
+fi
+
 ntests=0
 nfails=0
 for tc in $TESTCASES
@@ -521,4 +565,15 @@ do
         log "testcase $ntests : ok"
     fi
 done
+
+if test 0 -eq $DO_KMODREFLEAK_CHECK -a 0 -eq $nfails
+then
+    kmodrefleak_final_check || cat << EOF
+
+l2tp kernel module refcount leaks detected.
+Rerun with -m to enable leak checks per test to help diagnose the problem.
+
+EOF
+fi
+
 report_and_exit $ntests $CHECK_COUNT $nfails 0
