@@ -179,13 +179,15 @@ cleanup()
 {
     local ns
     local j=$(jobs -p)
-
     test -z "$j" || kill $j > /dev/null 2>&1 && wait $j >/dev/null 2>&1
-    rm -f /tmp/l2tp-ktest-sess-dataif-[cs]*
     for ns in host-1 host-2 router
     do
+        ip netns list | grep -q ${ns} || continue                          
+        j=$(ip netns pids ${ns})
+        test -z "$j" || kill $j > /dev/null 2>&1 && wait $j >/dev/null 2>&1
         ip netns del ${ns} 2>/dev/null
     done
+    rm -f /tmp/l2tp-ktest-sess-dataif-[cs]*
 }
 
 setup_l2tp_session()
