@@ -115,7 +115,7 @@ kmemleak_clear()
 {
     if test 1 -eq $DO_KMEMLEAK_CHECK && test -f $KMEMLEAK
     then
-        echo clear > $KMEMLEAK
+        /bin/echo clear > $KMEMLEAK
     fi
 }
 
@@ -123,7 +123,7 @@ kmemleak_check()
 {
     if test 1 -eq $DO_KMEMLEAK_CHECK && test -f $KMEMLEAK
     then
-        echo scan > $KMEMLEAK
+        /bin/echo scan > $KMEMLEAK
         test 0 -eq $(wc -l $KMEMLEAK | cut -d" " -f1)
     else
         return 0
