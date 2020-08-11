@@ -483,70 +483,87 @@ int kernel_tunnel_create(int tfd, struct l2tp_options *options, int *ctlsk)
     return ret;
 }
 
+static int kernel_session_create_nl(struct l2tp_options *options)
+{
+    assert(options);
+    assert(options->create_api == L2TP_NETLINK_API);
+
+    struct l2tp_session_nl_config scfg = {
+        .debug = opt_debug ? 0xff : 0,
+        .mtu = options->mtu ? options->mtu : 1300,
+        .pw_type = options->pseudowire,
+        .ifname = options->ifname[0] ? &options->ifname[0] : NULL,
+        .cookie_len = options->cookie_len,
+        .peer_cookie_len = options->peer_cookie_len,
+        /* leave everything else as default */
+    };
+    struct l2tp_session_data sd = {};
+    int ret;
+
+    assert(options->cookie_len <= sizeof(scfg.cookie));
+    memcpy(&scfg.cookie[0], &options->cookie[0], options->cookie_len);
+    assert(options->peer_cookie_len <= sizeof(scfg.peer_cookie));
+    memcpy(&scfg.peer_cookie[0], &options->peer_cookie[0], options->peer_cookie_len);
+
+    ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &scfg);
+    if (ret) return ret;
+
+    if (0 == l2tp_nl_session_get(options->tid, options->sid, &sd)) {
+        if (sd.ifname) {
+            strncpy(&options->ifname[0], sd.ifname, sizeof(options->ifname) - 1);
+            free(sd.ifname);
+        }
+    }
+    return 0;
+}
+
+static int kernel_session_create_pppox(struct l2tp_options *options, int *ctlsk, int *pppsk)
+{
+    assert(options);
+    assert(ctlsk); // expect control socket output variable, ppp socket output variable optional
+
+    *ctlsk = pppol2tp_session_ctrl_socket(options->family, options->l2tp_version, options->tid,
+                                          options->ptid, options->sid, options->psid);
+    if (*ctlsk < 0) return *ctlsk;
+
+    if (pppsk) {
+        int fd, unit = -1;
+        fd = ppp_generic_establish_ppp(*ctlsk, &unit);
+        if (fd < 0) return fd;
+        snprintf(&options->ifname[0], sizeof(options->ifname), "ppp%d", unit);
+        *pppsk = fd;
+    }
+    return 0;
+}
+
 int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk)
 {
     assert(options);
     assert(options->create_api == L2TP_SOCKET_API || options->create_api == L2TP_NETLINK_API);
-    assert(options->create_api == L2TP_NETLINK_API || ctlsk); // need output pointer if using socket API
+    assert(ctlsk);
 
-    int ret;
+    int ret = -ENOSYS;
 
     switch (options->create_api) {
         case L2TP_SOCKET_API:
-do_pppox_connect:
-            ret = pppol2tp_session_ctrl_socket(options->family, options->l2tp_version, options->tid, options->ptid, options->sid, options->psid);
-            if (ret >= 0) {
-                if (ctlsk) *ctlsk = ret;
-                ret = 0;
-                if (pppsk) {
-                    int unit = -1;
-                    *pppsk = ppp_generic_establish_ppp(*ctlsk, &unit);
-                    if (*pppsk >= 0 && unit >= 0) {
-                        snprintf(&options->ifname[0], sizeof(options->ifname), "ppp%d", unit);
-                    }
-                }
+            ret = kernel_session_create_pppox(options, ctlsk, pppsk);
+        break;
+        case L2TP_NETLINK_API:
+            ret = kernel_session_create_nl(options);
+            if (ret == 0) {
+                /* To actually bind the pppox session we still need to
+                 * call connect on a pppox socket :-/
+                 */
+                if (options->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP)
+                    ret = kernel_session_create_pppox(options, ctlsk, pppsk);
             }
         break;
-        case L2TP_NETLINK_API: {
-            struct l2tp_session_nl_config scfg = {
-                .debug = opt_debug ? 0xff : 0,
-                .mtu = options->mtu ? options->mtu : 1300,
-                .pw_type = options->pseudowire,
-                .ifname = options->ifname[0] ? &options->ifname[0] : NULL,
-                .cookie_len = options->cookie_len,
-                .peer_cookie_len = options->peer_cookie_len,
-                /* leave everything else as default */
-            };
-            assert(options->cookie_len <= sizeof(scfg.cookie));
-            memcpy(&scfg.cookie[0], &options->cookie[0], options->cookie_len);
-            assert(options->peer_cookie_len <= sizeof(scfg.peer_cookie));
-            memcpy(&scfg.peer_cookie[0], &options->peer_cookie[0], options->peer_cookie_len);
-
-            ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &scfg);
-            if (ret) return ret;
-
-            /* To actually bind the pppox session we still need to
-             * call connect on a pppox socket :-/
-             */
-            if (options->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP) goto do_pppox_connect;
-        } break;
         case L2TP_UNDEFINED_API:
             assert(!"Unhandled switch case");
-            ret = -ENOSYS;
         break;
     }
 
     if (ret == 0) {
-        if (!options->ifname[0]) {
-            struct l2tp_session_data sd = {};
-            ret = l2tp_nl_session_get(options->tid, options->sid, &sd);
-            if (ret == 0) {
-                if (sd.ifname) {
-                    strncpy(&options->ifname[0], sd.ifname, sizeof(options->ifname) - 1);
-                    free(sd.ifname);
-                }
-            }
-        }
         log("session %u/%u uses %s\n", options->tid, options->sid, options->ifname[0] ? options->ifname : "?");
     }
     return ret;
