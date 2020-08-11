@@ -52,18 +52,25 @@
  */
 #include <assert.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <inttypes.h>
 #include <errno.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <regex.h>
 
 #include "l2tp_netlink.h"
 #include "util.h"
 #include "util_ppp.h"
 
+static bool g_have_l2tp_trace_events;
+
 #define L2TP_HDRFLAG_SEQ    0x0800
 #define L2TP_HDR_VER_2      0x0002
+
+#define L2TP_TRACE_EVENT_ENABLE_PATH "/sys/kernel/debug/tracing/events/l2tp/enable"
+#define TRACE_LOG_PATH "/sys/kernel/debug/tracing/trace"
 
 #define err_dump_session_stats(_prefix, _ss) do { \
     err(_prefix); \
@@ -79,6 +86,60 @@
             (_ss)->data_rx_oos_discards, \
             (_ss)->data_rx_oos_packets); \
 } while(0)
+
+
+static void clear_trace(void)
+{
+    if (g_have_l2tp_trace_events) {
+        FILE *f = fopen(TRACE_LOG_PATH, "w");
+        if (f) fclose(f);
+    }
+}
+
+static void enable_trace(void)
+{
+    if (g_have_l2tp_trace_events) {
+        FILE *f = fopen(L2TP_TRACE_EVENT_ENABLE_PATH, "w");
+        if (f) {
+            char enable = '1';
+            fwrite(&enable, 1, 1, f);
+            fclose(f);
+        }
+    }
+}
+
+static char *get_trace(void)
+{
+    static char buf[8192];
+    memset(buf, 0, sizeof(buf));
+    if (g_have_l2tp_trace_events) {
+        FILE *f = fopen(TRACE_LOG_PATH, "r");
+        if (f) {
+            size_t n = fread(buf, 1, sizeof(buf)-1, f);
+            buf[n+1] = '\0';
+            fclose(f);
+            dbg("%s\n", buf);
+        }
+    }
+    return buf;
+}
+
+static bool trace_regex_find(char *regex)
+{
+    char *trace = get_trace();
+    regex_t re;
+    int ret;
+
+    ret = regcomp(&re, regex, 0);
+    if (ret) {
+        err("failed to compile regex '%s'\n", regex);
+        return false;
+    }
+
+    ret = regexec(&re, trace, 0, NULL, 0);
+    regfree(&re);
+    return ret == 0;
+}
 
 static int get_session_stats(uint32_t tid, uint32_t sid, struct l2tp_session_stats *out)
 {
@@ -115,12 +176,14 @@ static size_t build_v2_hdr(uint16_t flags,
 static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options *options)
 {
 #define pktlen 64
+#define regex_count_max 4
     struct ingress_testcases {
         int hdr_flags;
         int lns_mode;
         int recv_seq;
         int send_seq;
         struct l2tp_session_stats expected_stats;
+        char *trace_regex[regex_count_max];
     } c[] = {
         // No seq in packet, recv_seq in session config
         {
@@ -148,6 +211,13 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 .data_rx_packets = 1,
                 .data_rx_bytes = pktlen,
             },
+            // seqnum in packet triggers send_seq in LAC mode,
+            // successful recv should update seqnum in session
+            .trace_regex = {
+                "^.*session_seqnum_lns_enable",
+                "^.*session_seqnum_reset",
+                "^.*session_seqnum_update",
+            },
         },
         {
             .hdr_flags = L2TP_HDRFLAG_SEQ,
@@ -156,6 +226,11 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             .expected_stats = {
                 .data_rx_packets = 1,
                 .data_rx_bytes = pktlen,
+            },
+            // successful recv should update seqnum in session
+            .trace_regex = {
+                "^.*session_seqnum_reset",
+                "^.*session_seqnum_update",
             },
         },
         // Seq in packet, lns_mode in session config
@@ -215,6 +290,8 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 c[i].recv_seq,
                 c[i].send_seq);
 
+        clear_trace();
+
         ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &cfg);
         if (ret != 0) {
             err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
@@ -241,12 +318,24 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             return -1;
         }
 
+        if (g_have_l2tp_trace_events) {
+            int j;
+            for (j = 0; c[i].trace_regex[j]; j++) {
+                if (!trace_regex_find(c[i].trace_regex[j])) {
+                    err("expected pattern '%s' in event trace not found\n", c[i].trace_regex[j]);
+                    return -1;
+                }
+            }
+        }
+
         l2tp_nl_session_delete(options->tid, options->sid);
         usleep(250*1000);
 
         log("OK\n");
     }
     return 0;
+#undef pktlen
+#undef regex_count_max
 }
 
 static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options *options)
@@ -339,6 +428,15 @@ int main(int argc, char **argv)
     if (optind >= argc) {
         show_usage(argv[0]);
         exit(EXIT_FAILURE);
+    }
+
+    /* Do we have l2tp subsystem trace events? */
+    if (0 == access(L2TP_TRACE_EVENT_ENABLE_PATH, F_OK)) {
+        g_have_l2tp_trace_events = true;
+        log("have L2TP subsytem trace events\n");
+        enable_trace();
+    } else {
+        log("do not have L2TP subsytem trace events\n");
     }
 
     local_tfd = tunnel_socket(lo.family, lo.protocol, lo.tid, &lo.local_addr, &lo.peer_addr);
