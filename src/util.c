@@ -170,12 +170,10 @@ int tunnel_sk_addr_init(int family,
                 struct sockaddr_l2tpip *in4 = (void*)ss;
                 in4->l2tp_conn_id = tid;
                 *sslen = sizeof(*in4);
-                found = true;
             } else if (res->ai_family == AF_INET6) {
                 struct sockaddr_l2tpip6 *in6 = (void*)ss;
                 in6->l2tp_conn_id = tid;
                 *sslen = sizeof(*in6);
-                found = true;
             }
         } else {
             *sslen = res->ai_addrlen;
