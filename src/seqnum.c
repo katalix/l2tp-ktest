@@ -247,6 +247,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             },
         },
         */
+        // No seq in packet, send_seq and lns_mode in session config
         {
             .hdr_flags = 0,
             .send_seq = 1,
@@ -256,7 +257,19 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 .data_rx_oos_discards = 1,
             },
         },
-        // TODO: need to test lac mode, which will toggle config
+        {
+            .hdr_flags = 0,
+            .send_seq = 1,
+            .expected_stats = {
+                .data_rx_packets = 1,
+                .data_rx_bytes = pktlen,
+            },
+            // no seq in packet should disable send_seq
+            // since there's no packet seq we don't expect seqnum updates in session
+            .trace_regex = {
+                "^.*session_seqnum_lns_disable",
+            },
+        },
     };
     struct sockaddr_storage addr = {};
     socklen_t addrlen = 0;
