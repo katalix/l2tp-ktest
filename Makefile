@@ -52,6 +52,11 @@ sess_dataif_SRCS := $(SRCDIR)/sess_dataif.c $(COMMON_SOURCES)
 sess_dataif_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,sess_dataif))
 
+# seqnum
+seqnum_SRCS := $(SRCDIR)/seqnum.c $(COMMON_SOURCES)
+seqnum_LIBS := $(COMMON_LIBS)
+$(eval $(call buildapp,seqnum))
+
 # syzbot reproducers
 ifeq ($(OPT_NO_SYZBOT_APPS),0)
 include $(SRCDIR)/syzbot/syzbot.mk
