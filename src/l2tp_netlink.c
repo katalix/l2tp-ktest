@@ -510,6 +510,15 @@ int l2tp_nl_session_get(uint32_t tunnel_id, uint32_t session_id, struct l2tp_ses
     nlmsg_free(msg);
 out_put_cb:
     nl_cb_put(cb);
+    if (ret == 0) {
+        dbg("%s: ifname %s\n", __func__, data->ifname ? data->ifname : "unset");
+        dbg("%s: stats: tx: %" PRIu64 "/%" PRIu64 "/%" PRIu64" pkt/bytes/err\n",
+                __func__, data->stats.data_tx_packets, data->stats.data_tx_bytes, data->stats.data_tx_errors);
+        dbg("%s: stats: rx: %" PRIu64 "/%" PRIu64 "/%" PRIu64" pkt/bytes/err\n",
+                __func__, data->stats.data_rx_packets, data->stats.data_rx_bytes, data->stats.data_rx_errors);
+        dbg("%s: stats: rx: %" PRIu64 "/%" PRIu64 " seq_discard/oos\n",
+                __func__, data->stats.data_rx_oos_discards, data->stats.data_rx_oos_packets);
+    }
     my_nl_exit_log(ret);
     return ret;
 }
