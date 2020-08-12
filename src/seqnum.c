@@ -66,15 +66,22 @@
 
 static bool g_have_l2tp_trace_events;
 
-#define L2TPv2_HDR_FLAG_SEQ 0x0800
-#define L2TPv3_HDR_FLAG_SEQ 0x40000000
-#define L2TP_HDR_VER_2      0x0002
-#define L2TP_HDR_VER_3      0x0003
+#define L2TPv2_HDR_FLAG_SEQ             0x0800
+#define L2TPv3_HDR_FLAG_SEQ             0x40000000
+#define L2TP_HDR_VER_2                  0x0002
+#define L2TP_HDR_VER_3                  0x0003
 
-#define L2TP_TRACE_EVENT_ENABLE_PATH "/sys/kernel/debug/tracing/events/l2tp/enable"
-#define TRACE_LOG_PATH "/sys/kernel/debug/tracing/trace"
+#define L2TP_TRACE_EVENT_ENABLE_PATH    "/sys/kernel/debug/tracing/events/l2tp/enable"
+#define TRACE_LOG_PATH                  "/sys/kernel/debug/tracing/trace"
 
-#define SEQSET 0x80000000
+/* Seqnum sequences include flags to control the send/check function:
+ * this is possible because L2TPv2 uses a 16 bit seq, and L2TPv3 a 24 bit
+ * one, so we can take eight bytes from a uint32_t for signalling purposes.
+ */
+#define SEQSET                          0x80000000
+#define PAUSE_AFTER                     0x40000000
+#define SEQNUM_MASK                     0x00ffffff
+#define VALIDATE_QUEUE_TIMEOUT          100 // ms
 
 #define err_dump_session_stats(_prefix, _ss) do { \
     err(_prefix); \
@@ -240,17 +247,22 @@ static int send_and_check(int peer_tfd,
     /* Send packet(s) */
     for (i = 0; seqnum[i]&SEQSET; i++) {
 
+        uint32_t ns = seqnum[i]&SEQNUM_MASK;
         memset(pkt, 0xae, pktlen);
 
         if (opt->l2tp_version == L2TP_API_PROTOCOL_VERSION_2) {
-            (void)build_v2_hdr(send_seq, seqnum[i]&~SEQSET, 0, opt->tid, opt->sid, &pkt);
+            (void)build_v2_hdr(send_seq, ns, 0, opt->tid, opt->sid, &pkt);
         } else {
-            (void)build_v3_udp_hdr(send_seq, seqnum[i]&~SEQSET, opt->sid, &pkt);
+            (void)build_v3_udp_hdr(send_seq, ns, opt->sid, &pkt);
         }
 
         if (sendto(peer_tfd, pkt, pktlen, 0, (void *)&addr, addrlen) <= 0) {
             err("sendto: %s\n", strerror(errno));
             return -errno;
+        }
+
+        if (seqnum[i]&PAUSE_AFTER) {
+            usleep((10+VALIDATE_QUEUE_TIMEOUT) * 1000);
         }
     }
 
@@ -501,7 +513,7 @@ static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options
             int j;
             log("%s: seqnum ", __func__);
             for (j = 0; c[i].seqnum[j]&SEQSET; j++) {
-                log_raw("%u ", c[i].seqnum[j]&~SEQSET);
+                log_raw("%u ", c[i].seqnum[j]&SEQNUM_MASK);
             }
             log_raw("\n");
         }
@@ -530,8 +542,81 @@ static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options
 
 static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *options)
 {
-    printf("%s\n", __func__);
-    return -ENOSYS;
+#define pktlen 64
+#define regex_count_max 4
+#define seqnum_count_max 10
+    struct queue_testcases {
+        uint32_t seqnum[seqnum_count_max];
+        struct l2tp_session_stats expected_stats;
+        char *trace_regex[regex_count_max];
+    } c[] = {
+        // oos packets should be reordered
+        {
+            .seqnum = {SEQSET|0, SEQSET|2, SEQSET|1},
+            .expected_stats = {
+                .data_rx_packets = 3,
+                .data_rx_bytes = 3*pktlen,
+                .data_rx_oos_packets = 1,
+            },
+        },
+        // packet loss should be recovered from
+        {
+            .seqnum = {SEQSET|0, SEQSET|PAUSE_AFTER|2, SEQSET|3},
+            .expected_stats = {
+                .data_rx_errors = 1,
+                .data_rx_packets = 2,
+                .data_rx_bytes = 2*pktlen,
+                .data_rx_oos_discards = 1,
+            },
+            .trace_regex = {
+                "^.*session_pkt_expired",
+                "^.*session_seqnum_reset",
+                "^.*session_seqnum_update",
+            },
+        },
+    };
+    int i;
+
+    for (i = 0; i < sizeof(c)/sizeof(c[0]); i++) {
+        struct l2tp_session_nl_config cfg = {
+            .debug = opt_debug ? 0xff : 0,
+            .mtu = -1,
+            .pw_type = options->pseudowire,
+            .l2spec_type = L2TP_API_SESSION_L2SPECTYPE_DEFAULT,
+            .send_seq = 1,
+            .reorder_timeout = VALIDATE_QUEUE_TIMEOUT,
+        };
+        int ret;
+
+        {
+            int j;
+            log("%s: seqnum ", __func__);
+            for (j = 0; c[i].seqnum[j]&SEQSET; j++) {
+                log_raw("%u ", c[i].seqnum[j]&SEQNUM_MASK);
+            }
+            log_raw("\n");
+        }
+
+        ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &cfg);
+        if (ret != 0) {
+            err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
+            return ret;
+        }
+
+        ret = send_and_check(peer_tfd, true, c[i].seqnum, pktlen, &c[i].expected_stats, c[i].trace_regex, options);
+        if (ret != 0)
+            return ret;
+
+        l2tp_nl_session_delete(options->tid, options->sid);
+        usleep(250*1000);
+
+        log("OK\n");
+    }
+
+    return 0;
+#undef pktlen
+#undef regex_count_max
+#undef seqnum_count_max
 }
 
 static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options *options)
@@ -590,7 +675,7 @@ static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options 
             int j;
             log("%s: seqnum ", __func__);
             for (j = 0; c[i].seqnum[j]&SEQSET; j++) {
-                log_raw("%u ", c[i].seqnum[j]&~SEQSET);
+                log_raw("%u ", c[i].seqnum[j]&SEQNUM_MASK);
             }
             log_raw("\n");
         }
