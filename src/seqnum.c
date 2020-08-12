@@ -536,8 +536,85 @@ static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *o
 
 static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options *options)
 {
-    printf("%s\n", __func__);
-    return -ENOSYS;
+#define pktlen 64
+#define regex_count_max 4
+#define seqnum_count_max 10
+    struct noqueue_testcases {
+        uint32_t seqnum[seqnum_count_max];
+        struct l2tp_session_stats expected_stats;
+        char *trace_regex[regex_count_max];
+    } c[] = {
+        // oos packets should be discarded
+        {
+            .seqnum = {SEQSET|0, SEQSET|2, SEQSET|1},
+            .expected_stats = {
+                .data_rx_errors = 1,
+                .data_rx_packets = 2,
+                .data_rx_bytes = 2*pktlen,
+                .data_rx_oos_discards = 1,
+            },
+            .trace_regex = {
+                "^.*session_pkt_oos",
+            },
+        },
+        // packet loss should be recovered from
+        {
+            .seqnum = {SEQSET|0, SEQSET|2, SEQSET|3, SEQSET|4, SEQSET|5, SEQSET|6, SEQSET|7, SEQSET|8},
+            .expected_stats = {
+                .data_rx_errors = 5,
+                .data_rx_packets = 3,
+                .data_rx_bytes = 3*pktlen,
+                .data_rx_oos_discards = 5,
+            },
+            .trace_regex = {
+                "^.*session_pkt_oos",
+                "^.*session_seqnum_reset",
+                "^.*session_seqnum_update",
+            },
+        },
+    };
+    int i;
+
+    for (i = 0; i < sizeof(c)/sizeof(c[0]); i++) {
+        struct l2tp_session_nl_config cfg = {
+            .debug = opt_debug ? 0xff : 0,
+            .mtu = -1,
+            .pw_type = options->pseudowire,
+            .l2spec_type = L2TP_API_SESSION_L2SPECTYPE_DEFAULT,
+            .send_seq = 1,
+            .reorder_timeout = 0,
+        };
+        int ret;
+
+        {
+            int j;
+            log("%s: seqnum ", __func__);
+            for (j = 0; c[i].seqnum[j]&SEQSET; j++) {
+                log_raw("%u ", c[i].seqnum[j]&~SEQSET);
+            }
+            log_raw("\n");
+        }
+
+        ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &cfg);
+        if (ret != 0) {
+            err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
+            return ret;
+        }
+
+        ret = send_and_check(peer_tfd, true, c[i].seqnum, pktlen, &c[i].expected_stats, c[i].trace_regex, options);
+        if (ret != 0)
+            return ret;
+
+        l2tp_nl_session_delete(options->tid, options->sid);
+        usleep(250*1000);
+
+        log("OK\n");
+    }
+
+    return 0;
+#undef pktlen
+#undef regex_count_max
+#undef seqnum_count_max
 }
 
 void show_usage(const char *myname)
