@@ -702,11 +702,58 @@ static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options 
 #undef seqnum_count_max
 }
 
-void show_usage(const char *myname)
+static int run_tests(struct l2tp_options *opt, char *mode)
+{
+    assert(opt);
+
+    struct test_modes {
+        const char *name;
+        int (*handler)(int local_tfd, int peer_tfd, struct l2tp_options *);
+    } modes[] = {
+        { "ingress", do_validate_ingress },
+        { "rxwindow", do_validate_rxwindow },
+        { "queue", do_validate_queue },
+        { "noqueue", do_validate_noqueue },
+    };
+    int local_tfd, peer_tfd, i, ret = -ENOENT;
+
+    log("%s: L2TPv%d, mode %s\n", __func__, opt->l2tp_version, mode ? mode : "all");
+
+    local_tfd = tunnel_socket(opt->family, opt->protocol, opt->tid, &opt->local_addr, &opt->peer_addr);
+    if (local_tfd < 0) {
+        die("failed to open local tunnel socket\n");
+    }
+
+    peer_tfd = tunnel_socket(opt->family, opt->protocol, opt->tid, &opt->peer_addr, &opt->local_addr);
+    if (peer_tfd < 0) {
+        die("failed to open peer tunnel socket\n");
+    }
+
+    if (0 != kernel_tunnel_create(local_tfd, opt, NULL)) {
+        die("failed to create local tunnel instance\n");
+    }
+
+    for (i = 0; i < sizeof(modes)/sizeof(modes[0]); i++) {
+        if (mode) {
+            if (0 != strcmp(mode, modes[i].name))
+                continue;
+        }
+        ret = modes[i].handler(local_tfd, peer_tfd, opt);
+        if (ret)
+            break;
+    }
+
+    close(local_tfd);
+    close(peer_tfd);
+
+    return ret;
+}
+
+static void show_usage(const char *myname)
 {
     printf("Name:     %s\n", myname);
     printf("Desc:     validate kernel dataplane sequence number handling\n");
-    printf("Usage:    %s [options] <mode>\n", myname);
+    printf("Usage:    %s [options] [mode]\n", myname);
     printf("\n");
     printf("          -h    print this usage information\n");
     printf("\n");
@@ -723,20 +770,12 @@ void show_usage(const char *myname)
     printf("          queue         validates oos packet handling with reorder_timeout != 0.\n");
     printf("          noqueue       validates oos packet handling with reorder_timeout == 0.\n");
     printf("\n");
+    printf("          If no validation mode is specified, all modes will be run for both L2TPv2 and v3.\n");
+    printf("\n");
 }
 
 int main(int argc, char **argv)
 {
-    struct test_modes {
-        const char *name;
-        int (*handler)(int local_tfd, int peer_tfd, struct l2tp_options *);
-    } modes[] = {
-        { "ingress", do_validate_ingress },
-        { "rxwindow", do_validate_rxwindow },
-        { "queue", do_validate_queue },
-        { "noqueue", do_validate_noqueue },
-    };
-
     struct l2tp_options lo = {
         .l2tp_version   = 2,
         .create_api = L2TP_NETLINK_API,
@@ -753,7 +792,12 @@ int main(int argc, char **argv)
         .psid = 2,
     };
 
-    int opt, i, local_tfd, peer_tfd;
+    char *user_specified_mode = NULL;
+    enum l2tp_api_protocol_version versions[] = {
+        L2TP_API_PROTOCOL_VERSION_2,
+        L2TP_API_PROTOCOL_VERSION_3,
+    };
+    int opt, i;
 
     /* Parse commandline, doing basic sanity checking as we go */
     while ((opt = getopt(argc, argv, "hv:")) != -1) {
@@ -762,18 +806,18 @@ int main(int argc, char **argv)
             show_usage(argv[0]);
             exit(EXIT_SUCCESS);
         case 'v':
-            lo.l2tp_version = atoi(optarg);
-            if (lo.l2tp_version != 3 && lo.l2tp_version != 2)
+            if (!parse_l2tp_version(optarg, (int*)&versions[0])) {
                 die("Invalid l2tp version %s\n", optarg);
+            }
+            versions[1] = 0;
             break;
         default:
             die("failed to parse command line args\n");
         }
     }
 
-    if (optind >= argc) {
-        show_usage(argv[0]);
-        exit(EXIT_FAILURE);
+    if (optind < argc) {
+        user_specified_mode = argv[optind];
     }
 
     /* Do we have l2tp subsystem trace events? */
@@ -785,24 +829,13 @@ int main(int argc, char **argv)
         log("do not have L2TP subsytem trace events\n");
     }
 
-    local_tfd = tunnel_socket(lo.family, lo.protocol, lo.tid, &lo.local_addr, &lo.peer_addr);
-    if (local_tfd < 0) {
-        die("failed to open local tunnel socket\n");
+    for (i = 0; i < sizeof(versions)/sizeof(versions[0]) && versions[i]; i++) {
+        int ret;
+
+        lo.l2tp_version = versions[i];
+        ret = run_tests(&lo, user_specified_mode);
+        if (ret) return EXIT_FAILURE;
     }
 
-    peer_tfd = tunnel_socket(lo.family, lo.protocol, lo.tid, &lo.peer_addr, &lo.local_addr);
-    if (peer_tfd < 0) {
-        die("failed to open peer tunnel socket\n");
-    }
-
-    if (0 != kernel_tunnel_create(local_tfd, &lo, NULL)) {
-        die("failed to create local tunnel instance\n");
-    }
-
-    for (i = 0; i < sizeof(modes)/sizeof(modes[0]); i++) {
-        if (0 == strcmp(argv[optind], modes[i].name)) {
-            return modes[i].handler(local_tfd, peer_tfd, &lo) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
-        }
-    }
-    die("Unrecognised mode \"%s\"\n", argv[optind]);
+    return EXIT_SUCCESS;
 }
