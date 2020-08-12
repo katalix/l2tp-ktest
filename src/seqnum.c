@@ -74,6 +74,8 @@ static bool g_have_l2tp_trace_events;
 #define L2TP_TRACE_EVENT_ENABLE_PATH "/sys/kernel/debug/tracing/events/l2tp/enable"
 #define TRACE_LOG_PATH "/sys/kernel/debug/tracing/trace"
 
+#define SEQSET 0x80000000
+
 #define err_dump_session_stats(_prefix, _ss) do { \
     err(_prefix); \
     err("  tx: %" PRIu64 "/%" PRIu64 "/%" PRIu64 " (pkt/bytes/errors)\n", \
@@ -206,6 +208,79 @@ static size_t build_v3_udp_hdr(bool send_seq,
     return (char *)pout - (char *)out;
 }
 
+static int send_and_check(int peer_tfd,
+                          bool send_seq,
+                          uint32_t *seqnum,
+                          size_t pktlen,
+                          struct l2tp_session_stats *expected_stats,
+                          char *expected_trace_regex[],
+                          struct l2tp_options *opt)
+{
+    uint32_t dflt_seqnum[2] = {SEQSET|0};
+    struct sockaddr_storage addr = {};
+    struct l2tp_session_stats ss = {};
+    socklen_t addrlen = 0;
+    char pkt[1024];
+    int i;
+
+    assert(pktlen <= sizeof(pkt));
+
+    assert(0 == tunnel_sk_addr_init(opt->family,
+                                    opt->protocol,
+                                    opt->local_addr.ip,
+                                    opt->local_addr.port,
+                                    opt->tid,
+                                    &addr,
+                                    &addrlen));
+
+    if (!seqnum) seqnum = dflt_seqnum;
+
+    clear_trace();
+
+    /* Send packet(s) */
+    for (i = 0; seqnum[i]&SEQSET; i++) {
+
+        memset(pkt, 0xae, pktlen);
+
+        if (opt->l2tp_version == L2TP_API_PROTOCOL_VERSION_2) {
+            (void)build_v2_hdr(send_seq, seqnum[i]&~SEQSET, 0, opt->tid, opt->sid, &pkt);
+        } else {
+            (void)build_v3_udp_hdr(send_seq, seqnum[i]&~SEQSET, opt->sid, &pkt);
+        }
+
+        if (sendto(peer_tfd, pkt, pktlen, 0, (void *)&addr, addrlen) <= 0) {
+            err("sendto: %s\n", strerror(errno));
+            return -errno;
+        }
+    }
+
+    /* Validate expectations */
+    if (expected_stats) {
+        if (0 != get_session_stats(opt->tid, opt->sid, &ss)) {
+            err("failed to get session stats\n");
+            return -1;
+        }
+
+        if (0 != memcmp(&ss, expected_stats, sizeof(ss))) {
+            err("statistics mismatch\n");
+            err_dump_session_stats("expected:\n", expected_stats);
+            err_dump_session_stats("actual:\n", &ss);
+            return -1;
+        }
+    }
+
+    if (g_have_l2tp_trace_events && expected_trace_regex) {
+        for (i = 0; expected_trace_regex[i]; i++) {
+            if (!trace_regex_find(expected_trace_regex[i])) {
+                err("expected pattern '%s' in event trace not found\n", expected_trace_regex[i]);
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
+
 static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options *options)
 {
 #define pktlen 64
@@ -304,17 +379,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             },
         },
     };
-    struct sockaddr_storage addr = {};
-    socklen_t addrlen = 0;
     int i;
-
-    assert(0 == tunnel_sk_addr_init(options->family,
-                                    options->protocol,
-                                    options->local_addr.ip,
-                                    options->local_addr.port,
-                                    options->tid,
-                                    &addr,
-                                    &addrlen));
 
     for (i = 0; i < sizeof(c)/sizeof(c[0]); i++) {
         struct l2tp_session_nl_config cfg = {
@@ -326,8 +391,6 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             .recv_seq = c[i].recv_seq,
             .send_seq = c[i].send_seq,
         };
-        struct l2tp_session_stats ss = {};
-        char pkt[pktlen] = {};
         int ret;
 
         log("%s: pkt_seq=%u, session lns_mode=%u, recv_seq=%u, send_seq=%u\n",
@@ -337,7 +400,6 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 c[i].recv_seq,
                 c[i].send_seq);
 
-        clear_trace();
 
         ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &cfg);
         if (ret != 0) {
@@ -345,39 +407,9 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             return ret;
         }
 
-        memset(pkt, 0xae, sizeof(pkt));
-        if (options->l2tp_version == L2TP_API_PROTOCOL_VERSION_2) {
-            (void)build_v2_hdr(c[i].pkt_seq, 0, 0, options->tid, options->sid, &pkt);
-        } else {
-            (void)build_v3_udp_hdr(c[i].pkt_seq, 0, options->sid, &pkt);
-        }
-
-        if (sendto(peer_tfd, pkt, sizeof(pkt), 0, (void *)&addr, addrlen) <= 0) {
-            err("sendto: %s\n", strerror(errno));
-            return -errno;
-        }
-
-        if (0 != get_session_stats(options->tid, options->sid, &ss)) {
-            err("failed to get session stats\n");
-            return -1;
-        }
-
-        if (0 != memcmp(&ss, &c[i].expected_stats, sizeof(ss))) {
-            err("statistics mismatch\n");
-            err_dump_session_stats("expected:\n", &c[i].expected_stats);
-            err_dump_session_stats("actual:\n", &ss);
-            return -1;
-        }
-
-        if (g_have_l2tp_trace_events) {
-            int j;
-            for (j = 0; c[i].trace_regex[j]; j++) {
-                if (!trace_regex_find(c[i].trace_regex[j])) {
-                    err("expected pattern '%s' in event trace not found\n", c[i].trace_regex[j]);
-                    return -1;
-                }
-            }
-        }
+        ret = send_and_check(peer_tfd, c[i].pkt_seq, NULL, pktlen, &c[i].expected_stats, c[i].trace_regex, options);
+        if (ret != 0)
+            return ret;
 
         l2tp_nl_session_delete(options->tid, options->sid);
         usleep(250*1000);
