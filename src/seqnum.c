@@ -66,8 +66,10 @@
 
 static bool g_have_l2tp_trace_events;
 
-#define L2TP_HDRFLAG_SEQ    0x0800
+#define L2TPv2_HDR_FLAG_SEQ 0x0800
+#define L2TPv3_HDR_FLAG_SEQ 0x40000000
 #define L2TP_HDR_VER_2      0x0002
+#define L2TP_HDR_VER_3      0x0003
 
 #define L2TP_TRACE_EVENT_ENABLE_PATH "/sys/kernel/debug/tracing/events/l2tp/enable"
 #define TRACE_LOG_PATH "/sys/kernel/debug/tracing/trace"
@@ -154,7 +156,7 @@ static int get_session_stats(uint32_t tid, uint32_t sid, struct l2tp_session_sta
     return -1;
 }
 
-static size_t build_v2_hdr(uint16_t flags,
+static size_t build_v2_hdr(bool send_seq,
                            uint16_t ns, uint16_t nr,
                            uint16_t tid, uint16_t sid,
                            void *out)
@@ -162,14 +164,45 @@ static size_t build_v2_hdr(uint16_t flags,
     assert(out);
 
     uint16_t *pout = out;
+    uint16_t flags = L2TP_HDR_VER_2;
 
-    *pout++ = htons(flags|L2TP_HDR_VER_2);
+    if (send_seq)
+        flags |= L2TPv2_HDR_FLAG_SEQ;
+
+    *pout++ = htons(flags);
     *pout++ = htons(tid);
     *pout++ = htons(sid);
-    if (flags & L2TP_HDRFLAG_SEQ) {
+    if (send_seq) {
         *pout++ = htons(ns);
         *pout++ = htons(nr);
     }
+    return (char *)pout - (char *)out;
+}
+
+static size_t build_v3_udp_hdr(bool send_seq,
+                               uint32_t seqnum,
+                               uint32_t sid,
+                               void *out)
+{
+    assert(out);
+    assert(seqnum <= 0xffffff);
+
+    uint32_t *pout = out;
+
+    {
+        uint16_t *pout_u16 = out;
+        *pout_u16++ = htons(L2TP_HDR_VER_3);
+        *pout_u16++ = 0;
+    }
+    pout++;
+
+    *pout++ = htonl(sid);
+
+    if (send_seq)
+        *pout++ = htonl(L2TPv3_HDR_FLAG_SEQ|seqnum);
+    else
+        *pout++ = 0;
+
     return (char *)pout - (char *)out;
 }
 
@@ -178,7 +211,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
 #define pktlen 64
 #define regex_count_max 4
     struct ingress_testcases {
-        int hdr_flags;
+        bool pkt_seq;
         int lns_mode;
         int recv_seq;
         int send_seq;
@@ -187,7 +220,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
     } c[] = {
         // No seq in packet, recv_seq in session config
         {
-            .hdr_flags = 0,
+            .pkt_seq = false,
             .recv_seq = 1,
             .expected_stats = {
                 .data_rx_errors = 1,
@@ -195,7 +228,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             },
         },
         {
-            .hdr_flags = 0,
+            .pkt_seq = false,
             .recv_seq = 1,
             .lns_mode = 1,
             .expected_stats = {
@@ -205,7 +238,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
         },
         // Seq in packet, recv_seq in session config
         {
-            .hdr_flags = L2TP_HDRFLAG_SEQ,
+            .pkt_seq = true,
             .recv_seq = 1,
             .expected_stats = {
                 .data_rx_packets = 1,
@@ -220,7 +253,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             },
         },
         {
-            .hdr_flags = L2TP_HDRFLAG_SEQ,
+            .pkt_seq = true,
             .recv_seq = 1,
             .lns_mode = 1,
             .expected_stats = {
@@ -238,7 +271,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
          * sending sequence numbers, but the LAC is sending them anyway.   However
          * that's OK by the kernel currently.
         {
-            .hdr_flags = L2TP_HDRFLAG_SEQ,
+            .pkt_seq = true,
             .send_seq = 0,
             .lns_mode = 1,
             .expected_stats = {
@@ -249,7 +282,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
         */
         // No seq in packet, send_seq and lns_mode in session config
         {
-            .hdr_flags = 0,
+            .pkt_seq = false,
             .send_seq = 1,
             .lns_mode = 1,
             .expected_stats = {
@@ -258,7 +291,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             },
         },
         {
-            .hdr_flags = 0,
+            .pkt_seq = false,
             .send_seq = 1,
             .expected_stats = {
                 .data_rx_packets = 1,
@@ -288,6 +321,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             .debug = opt_debug ? 0xff : 0,
             .mtu = -1,
             .pw_type = options->pseudowire,
+            .l2spec_type = L2TP_API_SESSION_L2SPECTYPE_DEFAULT,
             .lns_mode = c[i].lns_mode,
             .recv_seq = c[i].recv_seq,
             .send_seq = c[i].send_seq,
@@ -296,9 +330,9 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
         char pkt[pktlen] = {};
         int ret;
 
-        log("%s: pkt header 0x%x, session lns_mode=%u, recv_seq=%u, send_seq=%u\n",
+        log("%s: pkt_seq=%u, session lns_mode=%u, recv_seq=%u, send_seq=%u\n",
                 __func__,
-                c[i].hdr_flags,
+                c[i].pkt_seq ? 1 : 0,
                 c[i].lns_mode,
                 c[i].recv_seq,
                 c[i].send_seq);
@@ -311,9 +345,13 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             return ret;
         }
 
-        // FIXME: handle l2tpv3 as well!
         memset(pkt, 0xae, sizeof(pkt));
-        (void)build_v2_hdr(c[i].hdr_flags, 0, 0, options->tid, options->sid, &pkt);
+        if (options->l2tp_version == L2TP_API_PROTOCOL_VERSION_2) {
+            (void)build_v2_hdr(c[i].pkt_seq, 0, 0, options->tid, options->sid, &pkt);
+        } else {
+            (void)build_v3_udp_hdr(c[i].pkt_seq, 0, options->sid, &pkt);
+        }
+
         if (sendto(peer_tfd, pkt, sizeof(pkt), 0, (void *)&addr, addrlen) <= 0) {
             err("sendto: %s\n", strerror(errno));
             return -errno;
