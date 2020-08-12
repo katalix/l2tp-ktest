@@ -423,8 +423,109 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
 
 static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options *options)
 {
-    printf("%s\n", __func__);
-    return -ENOSYS;
+#define pktlen 64
+#define regex_count_max 4
+#define seqnum_count_max 6
+    struct rxwindow_testcases {
+        uint32_t seqnum[seqnum_count_max];
+        struct l2tp_session_stats expected_stats;
+        char *trace_regex[regex_count_max];
+    };
+
+    struct rxwindow_testcases v2c[] = {
+        // RFC2661 is a bit vague on the rules for dataplane sequence number comparisons,
+        // so the kernel copies the rules for the control plane (ref: RFC2661 section 5.8).
+        // At the start of time the session nr is zero, so:
+        //      0 -> 32766 inclusive is in sequence and should be accepted
+        //      32767 -> 65535 is out of sequence and should be rejected
+        { .seqnum = {SEQSET|0}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
+        { .seqnum = {SEQSET|1}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
+        { .seqnum = {SEQSET|32766}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
+        {
+            .seqnum = {SEQSET|32767},
+            .expected_stats = { .data_rx_errors = 1 },
+            .trace_regex = { "^.*session_pkt_outside_rx_window" },
+        },
+        {
+            .seqnum = {SEQSET|65535},
+            .expected_stats = { .data_rx_errors = 1 },
+            .trace_regex = { "^.*session_pkt_outside_rx_window" },
+        },
+    };
+
+    struct rxwindow_testcases v3c[] = {
+        // RFC3931 section 4.6 deals with the default L2-specific sublayer, which implements
+        // a 24-bit sequence number.
+        // At the start of time the session nr is zero, so:
+        //      0 -> 8388606 inclusive is in sequence and should be accepted
+        //      8388607 -> 16777215 is out of sequence and should be rejected
+        { .seqnum = {SEQSET|0}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
+        { .seqnum = {SEQSET|1}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
+        { .seqnum = {SEQSET|8388606}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
+        {
+            .seqnum = {SEQSET|8388607},
+            .expected_stats = { .data_rx_errors = 1 },
+            .trace_regex = { "^.*session_pkt_outside_rx_window" },
+        },
+        {
+            .seqnum = {SEQSET|16777215},
+            .expected_stats = { .data_rx_errors = 1 },
+            .trace_regex = { "^.*session_pkt_outside_rx_window" },
+        },
+    };
+
+    struct rxwindow_testcases *c;
+    size_t nc;
+    int i;
+
+    if (options->l2tp_version == L2TP_API_PROTOCOL_VERSION_2) {
+        c = v2c;
+        nc = sizeof(v2c)/sizeof(v2c[0]);
+    } else {
+        c = v3c;
+        nc = sizeof(v3c)/sizeof(v3c[0]);
+    }
+
+    for (i = 0; i < nc; i++) {
+
+        struct l2tp_session_nl_config cfg = {
+            .debug = opt_debug ? 0xff : 0,
+            .mtu = -1,
+            .pw_type = options->pseudowire,
+            .l2spec_type = L2TP_API_SESSION_L2SPECTYPE_DEFAULT,
+            .send_seq = 1,
+        };
+        int ret;
+
+        {
+            int j;
+            log("%s: seqnum ", __func__);
+            for (j = 0; c[i].seqnum[j]&SEQSET; j++) {
+                log_raw("%u ", c[i].seqnum[j]&~SEQSET);
+            }
+            log_raw("\n");
+        }
+
+        ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &cfg);
+        if (ret != 0) {
+            err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
+            return ret;
+        }
+
+        ret = send_and_check(peer_tfd, true, c[i].seqnum, pktlen, &c[i].expected_stats, c[i].trace_regex, options);
+        if (ret)
+            return ret;
+
+        l2tp_nl_session_delete(options->tid, options->sid);
+        usleep(250*1000);
+
+        log("OK\n");
+    }
+
+    return 0;
+#undef pktlen
+#undef regex_count_max
+#undef seqnum_count_max
 }
 
 static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *options)
