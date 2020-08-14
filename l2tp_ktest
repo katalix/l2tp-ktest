@@ -471,6 +471,14 @@ then
     fi
 fi
 
+# Datapath sequence number checks are agnostic to the pseudowire type and socket
+# address family, and hence are all handled by a single test application which covers
+# L2TPv2 and L2TPv3 sessions
+tc_data_seqnum()
+{
+    check $(dirname $0)/seqnum
+}
+
 kmodrefleak_final_check()
 {
     local ret=0
