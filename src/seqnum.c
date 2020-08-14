@@ -835,6 +835,10 @@ int main(int argc, char **argv)
         lo.l2tp_version = versions[i];
         ret = run_tests(&lo, user_specified_mode);
         if (ret) return EXIT_FAILURE;
+
+        // avoid possible races with tunnel async shutdown
+        lo.tid++;
+        lo.ptid++;
     }
 
     return EXIT_SUCCESS;
