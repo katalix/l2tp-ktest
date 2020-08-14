@@ -92,6 +92,7 @@ The test tools can be run on their own as well as by the test script:
   netdevice which can be used to test the data path. Two instances are required.
 * *tunl_delete_race* and *tunl_query_race* are designed to provoke race conditions
   in the kernel,
+* *seqnum* tests the kernel's data path sequence number handling,
 * the syzbot applications are [sysbot](https://github.com/google/syzkaller)
   reproducers for bugs reported to the [netdev](http://vger.kernel.org/vger-lists.html#netdev)
   mailing list for the L2TP subsystem.
