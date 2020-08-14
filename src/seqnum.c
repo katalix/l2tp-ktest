@@ -14,14 +14,14 @@
  * sequence numbers -- typically this will be used during PPP establishment.
  *
  * The L2TP kernel code has the following control knobs which influence data sequencing:
- * 
+ *
  *  - lns_mode: controls whether or not the peer can control sequence number toggling
  *  - recv_seq: causes packets without sequence numbers to be discarded
  *  - send_seq: causes packets to be transmitted with sequence numbers
  *  - reorder_timeout: allows OOS packets to be queued and reordered
- * 
+ *
  * The L2TP kernel code has the following algorithms and codepaths which need exercising:
- * 
+ *
  *  * packet ns parsing and seq state tracking
  *     - difficult to directly test
  *     - depends on L2TP protocol version
@@ -81,7 +81,7 @@ static bool g_have_l2tp_trace_events;
 #define SEQSET                          0x80000000
 #define PAUSE_AFTER                     0x40000000
 #define SEQNUM_MASK                     0x00ffffff
-#define VALIDATE_QUEUE_TIMEOUT          100 // ms
+#define VALIDATE_QUEUE_TIMEOUT          100 /* milliseconds */
 
 #define err_dump_session_stats(_prefix, _ss) do { \
     err(_prefix); \
@@ -305,7 +305,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
         struct l2tp_session_stats expected_stats;
         char *trace_regex[regex_count_max];
     } c[] = {
-        // No seq in packet, recv_seq in session config
+        /* No seq in packet, recv_seq in session config */
         {
             .pkt_seq = false,
             .recv_seq = 1,
@@ -323,7 +323,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 .data_rx_oos_discards = 1
             },
         },
-        // Seq in packet, recv_seq in session config
+        /* Seq in packet, recv_seq in session config */
         {
             .pkt_seq = true,
             .recv_seq = 1,
@@ -331,8 +331,9 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 .data_rx_packets = 1,
                 .data_rx_bytes = pktlen,
             },
-            // seqnum in packet triggers send_seq in LAC mode,
-            // successful recv should update seqnum in session
+            /* seqnum in packet triggers send_seq in LAC mode,
+             * successful recv should update seqnum in session
+             */
             .trace_regex = {
                 "^.*session_seqnum_lns_enable",
                 "^.*session_seqnum_reset",
@@ -347,27 +348,13 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 .data_rx_packets = 1,
                 .data_rx_bytes = pktlen,
             },
-            // successful recv should update seqnum in session
+            /* successful recv should update seqnum in session */
             .trace_regex = {
                 "^.*session_seqnum_reset",
                 "^.*session_seqnum_update",
             },
         },
-        // Seq in packet, lns_mode in session config
-        /* FIXME?  Logically I think this ought to fail: the LNS things it isn't
-         * sending sequence numbers, but the LAC is sending them anyway.   However
-         * that's OK by the kernel currently.
-        {
-            .pkt_seq = true,
-            .send_seq = 0,
-            .lns_mode = 1,
-            .expected_stats = {
-                .data_rx_errors = 1,
-                .data_rx_oos_discards = 1,
-            },
-        },
-        */
-        // No seq in packet, send_seq and lns_mode in session config
+        /* No seq in packet, send_seq and lns_mode in session config */
         {
             .pkt_seq = false,
             .send_seq = 1,
@@ -384,8 +371,9 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 .data_rx_packets = 1,
                 .data_rx_bytes = pktlen,
             },
-            // no seq in packet should disable send_seq
-            // since there's no packet seq we don't expect seqnum updates in session
+            /* No seq in packet should disable send_seq.
+             * Since there's no packet seq we don't expect seqnum updates in session.
+             */
             .trace_regex = {
                 "^.*session_seqnum_lns_disable",
             },
@@ -445,11 +433,12 @@ static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options
     };
 
     struct rxwindow_testcases v2c[] = {
-        // RFC2661 is a bit vague on the rules for dataplane sequence number comparisons,
-        // so the kernel copies the rules for the control plane (ref: RFC2661 section 5.8).
-        // At the start of time the session nr is zero, so:
-        //      0 -> 32766 inclusive is in sequence and should be accepted
-        //      32767 -> 65535 is out of sequence and should be rejected
+        /* RFC2661 is a bit vague on the rules for dataplane sequence number comparisons,
+         * so the kernel copies the rules for the control plane (ref: RFC2661 section 5.8).
+         * At the start of time the session nr is zero, so:
+         *      0 -> 32766 inclusive is in sequence and should be accepted
+         *      32767 -> 65535 is out of sequence and should be rejected
+         */
         { .seqnum = {SEQSET|0}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
         { .seqnum = {SEQSET|1}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
         { .seqnum = {SEQSET|32766}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
@@ -466,11 +455,12 @@ static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options
     };
 
     struct rxwindow_testcases v3c[] = {
-        // RFC3931 section 4.6 deals with the default L2-specific sublayer, which implements
-        // a 24-bit sequence number.
-        // At the start of time the session nr is zero, so:
-        //      0 -> 8388606 inclusive is in sequence and should be accepted
-        //      8388607 -> 16777215 is out of sequence and should be rejected
+        /* RFC3931 section 4.6 deals with the default L2-specific sublayer, which implements
+         * a 24-bit sequence number.
+         * At the start of time the session nr is zero, so:
+         *      0 -> 8388606 inclusive is in sequence and should be accepted
+         *      8388607 -> 16777215 is out of sequence and should be rejected
+         */
         { .seqnum = {SEQSET|0}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
         { .seqnum = {SEQSET|1}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
         { .seqnum = {SEQSET|8388606}, .expected_stats = { .data_rx_packets = 1, .data_rx_bytes = pktlen } },
@@ -550,7 +540,7 @@ static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *o
         struct l2tp_session_stats expected_stats;
         char *trace_regex[regex_count_max];
     } c[] = {
-        // oos packets should be reordered
+        /* oos packets should be reordered */
         {
             .seqnum = {SEQSET|0, SEQSET|2, SEQSET|1},
             .expected_stats = {
@@ -559,7 +549,7 @@ static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *o
                 .data_rx_oos_packets = 1,
             },
         },
-        // packet loss should be recovered from
+        /* packet loss should be recovered from */
         {
             .seqnum = {SEQSET|0, SEQSET|PAUSE_AFTER|2, SEQSET|3},
             .expected_stats = {
@@ -629,7 +619,7 @@ static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options 
         struct l2tp_session_stats expected_stats;
         char *trace_regex[regex_count_max];
     } c[] = {
-        // oos packets should be discarded
+        /* oos packets should be discarded */
         {
             .seqnum = {SEQSET|0, SEQSET|2, SEQSET|1},
             .expected_stats = {
@@ -642,7 +632,7 @@ static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options 
                 "^.*session_pkt_oos",
             },
         },
-        // packet loss should be recovered from
+        /* packet loss should be recovered from */
         {
             .seqnum = {SEQSET|0, SEQSET|2, SEQSET|3, SEQSET|4, SEQSET|5, SEQSET|6, SEQSET|7, SEQSET|8},
             .expected_stats = {
@@ -836,7 +826,7 @@ int main(int argc, char **argv)
         ret = run_tests(&lo, user_specified_mode);
         if (ret) return EXIT_FAILURE;
 
-        // avoid possible races with tunnel async shutdown
+        /* avoid possible races with tunnel async shutdown */
         lo.tid++;
         lo.ptid++;
     }
