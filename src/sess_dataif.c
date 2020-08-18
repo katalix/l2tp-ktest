@@ -184,26 +184,24 @@ static void do_create_session(struct session_options *so)
 
 static void send_ctrl_packet(struct tunnel_options *to)
 {
-    struct l2tp_control_hdr_v2 hdr2 = {};
-    struct l2tp_control_hdr_v3 hdr3 = {};
+    union {
+        struct l2tp_control_hdr_v2 hdr2;
+        struct l2tp_control_hdr_v3 hdr3;
+        char buf[64];
+    } pkt = {};
     ssize_t nb;
-    void *data;
     if (to->lo.l2tp_version == 2) {
-        hdr2.t_bit = hdr2.l_bit = 1;
-        hdr2.ver = to->lo.l2tp_version;
-        hdr2.tunnel_id = htons(to->lo.ptid);
-        hdr2.length = htons(sizeof(hdr2));
-        data = (void*)&hdr2;
-        nb = sizeof(hdr2);
+        pkt.hdr2.t_bit = pkt.hdr2.l_bit = 1;
+        pkt.hdr2.ver = to->lo.l2tp_version;
+        pkt.hdr2.tunnel_id = htons(to->lo.ptid);
+        pkt.hdr2.length = htons(sizeof(pkt));
     } else {
-        hdr3.t_bit = hdr3.l_bit = 1;
-        hdr3.ver = to->lo.l2tp_version;
-        hdr3.tunnel_id = htonl(to->lo.ptid);
-        hdr3.length = htons(sizeof(hdr3));
-        data = (void*)&hdr3;
-        nb = sizeof(hdr3);
+        pkt.hdr3.t_bit = pkt.hdr3.l_bit = 1;
+        pkt.hdr3.ver = to->lo.l2tp_version;
+        pkt.hdr3.tunnel_id = htonl(to->lo.ptid);
+        pkt.hdr3.length = htons(sizeof(pkt));
     }
-    nb = sendto(to->tfd, data, nb, 0, (void*)&to->peer_addr, to->peer_addr_len);
+    nb = sendto(to->tfd, &pkt, sizeof(pkt), 0, (void*)&to->peer_addr, to->peer_addr_len);
     if (nb > 0) {
         dbg("%s tunl %" PRIu32 "/%" PRIu32 ": sent %d bytes on socket %d\n",
                 to->ro.is_client ? "client" : "server",
