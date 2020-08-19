@@ -13,6 +13,8 @@
 #include <sys/time.h>
 #include "usl_list.h"
 
+#include "l2tp_kapi.h"
+
 typedef enum {
     L2TP_UNDEFINED_API,
     L2TP_SOCKET_API,
@@ -293,13 +295,28 @@ int kernel_tunnel_create(int tfd, struct l2tp_options *options, int *ctlsk);
  * Create kernel session data plane context.
  * This helper function creates a kernel context using either the
  * socket API or the netlink API as requested by the supplied options.
- *  @param  options     options governing tunnel creation
+ *  @param  options     options governing session creation
  *  @param  ctlsk       variable to receive control socket for pppol2tp/socket API
  *  @param  pppsk       variable to receive ppp socket if ppp session. May be null
  *                      if ppp data socket not required.
  *  @return             0 on success, negative errno otherwise
  */
 int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk);
+
+/**
+ * Create kernel session pppox socket(s).
+ * This helper function creates pppol2tp control and ppp sockets.
+ * Most code will be able to use kernel_session_create which wraps this function,
+ * however code wanting to control the netlink options passed to the kernel can
+ * use l2tp_nl_session_create to create the core kernel context, and then use this
+ * function to create the pppol2tp context.
+ *  @param  options     options governing session creation
+ *  @param  ctlsk       variable to receive control socket for pppol2tp/socket API
+ *  @param  pppsk       variable to receive ppp socket if ppp session. May be null
+ *                      if ppp data socket not required.
+ *  @return             0 on success, negative errno otherwise
+ */
+int kernel_session_create_pppox(struct l2tp_options *options, int *ctlsk, int *pppsk);
 
 /**
  * Generate a bounded random number using random(3).

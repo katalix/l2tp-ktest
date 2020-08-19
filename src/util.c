@@ -517,7 +517,7 @@ static int kernel_session_create_nl(struct l2tp_options *options)
     return 0;
 }
 
-static int kernel_session_create_pppox(struct l2tp_options *options, int *ctlsk, int *pppsk)
+int kernel_session_create_pppox(struct l2tp_options *options, int *ctlsk, int *pppsk)
 {
     assert(options);
     assert(ctlsk); // expect control socket output variable, ppp socket output variable optional
