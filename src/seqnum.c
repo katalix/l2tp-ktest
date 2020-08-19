@@ -266,14 +266,25 @@ static int send_and_check(int peer_tfd,
         }
     }
 
-    /* Validate expectations */
+    /* Validate expectations.
+     * Note that there's a potential race condition here: all we know at this point
+     * is that we've sent the packets, not necessarily that the packet receive code has
+     * had a chance to run.  As such, we have a short retry loop which allows a bit
+     * of leeway on getting updated stats.
+     */
     if (expected_stats) {
+        int retry = 0;
+again:
         if (0 != get_session_stats(opt->tid, opt->sid, &ss)) {
             err("failed to get session stats\n");
             return -1;
         }
 
         if (0 != memcmp(&ss, expected_stats, sizeof(ss))) {
+            if (++retry < 5) {
+                usleep(10*1000);
+                goto again;
+            }
             err("statistics mismatch\n");
             err_dump_session_stats("expected:\n", expected_stats);
             err_dump_session_stats("actual:\n", &ss);
