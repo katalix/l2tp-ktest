@@ -495,6 +495,7 @@ static int kernel_session_create_nl(struct l2tp_options *options)
         .ifname = options->ifname[0] ? &options->ifname[0] : NULL,
         .cookie_len = options->cookie_len,
         .peer_cookie_len = options->peer_cookie_len,
+        .pppoe_session_id = options->pw.pppac.id,
         /* leave everything else as default */
     };
     struct l2tp_session_data sd = {};
@@ -504,6 +505,7 @@ static int kernel_session_create_nl(struct l2tp_options *options)
     memcpy(&scfg.cookie[0], &options->cookie[0], options->cookie_len);
     assert(options->peer_cookie_len <= sizeof(scfg.peer_cookie));
     memcpy(&scfg.peer_cookie[0], &options->peer_cookie[0], options->peer_cookie_len);
+    memcpy(&scfg.pppoe_peer_mac, &options->pw.pppac.peer_mac, 6);
 
     ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &scfg);
     if (ret) return ret;
