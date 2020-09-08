@@ -390,6 +390,14 @@ bool parse_api(const char *str, api_flavour *flv);
 bool parse_address(char *str, struct addr *addr);
 
 /**
+ * Parse pseudowire type from NULL terminated string.
+ *  @param  str             pointer to string
+ *  @param  pwtype          pointer to variable to set with pseudowire type.
+ *  @return                 true on success, false otherwise.
+ */
+bool parse_pseudowire_type(char *str, enum l2tp_api_session_pw_type *pwtype);
+
+/**
  * Racing threads info for thread callbacks.
  */
 struct racing_threads_tunnel_info {

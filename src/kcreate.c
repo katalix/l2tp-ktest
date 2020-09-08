@@ -139,13 +139,7 @@ int main(int argc, char **argv)
             break;
         case 'p':
             rto.do_create_session = 1;
-            if (0 == strcmp("ppp", optarg))
-                lo.pseudowire = L2TP_API_SESSION_PW_TYPE_PPP;
-            else if (0 == strcmp("eth", optarg))
-                lo.pseudowire = L2TP_API_SESSION_PW_TYPE_ETH;
-            else if (0 == strcmp("pppac", optarg))
-                lo.pseudowire = L2TP_API_SESSION_PW_TYPE_PPP_AC;
-            else
+            if (!parse_pseudowire_type(optarg, &lo.pseudowire))
                 die("Invalid pseudowire %s\n", optarg);
             break;
         case 'T':

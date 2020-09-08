@@ -685,6 +685,20 @@ bool parse_address(char *str, struct addr *addr)
     return true;
 }
 
+bool parse_pseudowire_type(char *str, enum l2tp_api_session_pw_type *pwtype)
+{
+    if (!str || !pwtype) return false;
+    if (0 == strcmp("ppp", str))
+        *pwtype = L2TP_API_SESSION_PW_TYPE_PPP;
+    else if (0 == strcmp("eth", str))
+        *pwtype = L2TP_API_SESSION_PW_TYPE_ETH;
+    else if (0 == strcmp("pppac", str))
+        *pwtype = L2TP_API_SESSION_PW_TYPE_PPP_AC;
+    else
+        return false;
+    return true;
+}
+
 struct racing_thread {
     struct thread_data {
         pthread_t thread;
