@@ -11,6 +11,7 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <linux/l2tp.h>
 
 #include "l2tp_netlink.h"
@@ -51,7 +52,7 @@ void show_usage(const char *myname)
     printf("          -d    specify L2TP resource destruction API (socket or netlink: default is netlink)\n");
     printf("          -f    specify tunnel socket address family (inet or inet6: default is inet)\n");
     printf("          -e    specify tunnel encapsulation (udp or ip: default is udp)\n");
-    printf("          -p    specify session pseudowire type (ppp or eth)\n");
+    printf("          -p    specify session pseudowire type (ppp, eth, or pppac)\n");
     printf("          -T    specify local tunnel ID\n");
     printf("          -t    specify peer tunnel ID\n");
     printf("          -S    specify local session ID\n");
@@ -61,6 +62,12 @@ void show_usage(const char *myname)
     printf("\n");
     printf("          -P    specify peer address/port (e.g. -P 192.168.1.12/5555)\n");
     printf("          -L    specify local address/port (e.g. -P 192.168.1.12/5555)\n");
+    printf("\n");
+    printf("          Pseudowire-specific options:\n");
+    printf("\n");
+    printf("          -N    specify session interface name (eth and pppac pseudowires)\n");
+    printf("          -i    specify PPPoE session ID (pppac pseudowire only)\n");
+    printf("          -M    specify PPPoE peer MAC address (pppac pseudowire only)\n");
     printf("\n");
 }
 
@@ -89,7 +96,7 @@ int main(int argc, char **argv)
     };
 
     /* Parse commandline, doing basic sanity checking as we go */
-    while ((opt = getopt(argc, argv, "hmnxIuv:c:d:f:e:p:T:t:S:s:P:L:")) != -1) {
+    while ((opt = getopt(argc, argv, "hmnxIuv:c:d:f:e:p:T:t:S:s:P:L:N:i:M:")) != -1) {
         switch(opt) {
         case 'h':
             show_usage(argv[0]);
@@ -136,6 +143,8 @@ int main(int argc, char **argv)
                 lo.pseudowire = L2TP_API_SESSION_PW_TYPE_PPP;
             else if (0 == strcmp("eth", optarg))
                 lo.pseudowire = L2TP_API_SESSION_PW_TYPE_ETH;
+            else if (0 == strcmp("pppac", optarg))
+                lo.pseudowire = L2TP_API_SESSION_PW_TYPE_PPP_AC;
             else
                 die("Invalid pseudowire %s\n", optarg);
             break;
@@ -163,6 +172,25 @@ int main(int argc, char **argv)
             if (!parse_address(optarg, &lo.local_addr))
                 die("Failed to parse local address %s\n", optarg);
             break;
+        case 'N':
+            if (strlen(optarg) > sizeof(lo.ifname)-1)
+                die("Interface name \"%s\" is too long\n", optarg);
+            memcpy(lo.ifname, optarg, strlen(optarg));
+            break;
+        case 'i':
+            lo.pw.pppac.id = atoi(optarg);
+            break;
+        case 'M':
+            if (6 != sscanf(optarg,
+                        "%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8,
+                        &lo.pw.pppac.peer_mac[0],
+                        &lo.pw.pppac.peer_mac[1],
+                        &lo.pw.pppac.peer_mac[2],
+                        &lo.pw.pppac.peer_mac[3],
+                        &lo.pw.pppac.peer_mac[4],
+                        &lo.pw.pppac.peer_mac[5]))
+                die("Failed to parse MAC address \"%s\"\n", optarg);
+            break;
         default:
             die("failed to parse command line args\n");
         }
@@ -183,7 +211,8 @@ int main(int argc, char **argv)
      */
     if (lo.l2tp_version == 2) {
         if (rto.do_create_session &&
-            lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP)
+            lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP &&
+            lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP_AC)
             die("L2TPv2 code supports PPP pseudowires only\n");
         if (lo.protocol != IPPROTO_UDP)
             die("L2TPv2 code supports UDP encapsulation only\n");
