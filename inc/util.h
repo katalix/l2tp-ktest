@@ -45,6 +45,12 @@ struct l2tp_options {
     uint32_t sid;
     uint32_t psid;
     char ifname[16];
+    union {
+        struct {
+            uint8_t peer_mac[6];
+            uint16_t id;
+        } pppac;
+    } pw;
 };
 
 /*
