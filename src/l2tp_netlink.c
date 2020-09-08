@@ -304,6 +304,10 @@ out_put_cb:
     return ret;
 }
 
+/* FIXME: keep in sync with upstream, retire once available upstream! */
+#define L2TP_ATTR_PPPOE_SESSION_ID L2TP_ATTR_PAD+1
+#define L2TP_ATTR_PPPOE_PEER_MAC_ADDR L2TP_ATTR_PAD+2
+
 int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t session_id,
         uint32_t peer_session_id, struct l2tp_session_nl_config *cfg)
 {
@@ -369,6 +373,10 @@ int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t
         nla_put_u8(msg, L2TP_ATTR_L2SPEC_LEN, 0);
     } else if (cfg->l2spec_type == L2TP_API_SESSION_L2SPECTYPE_DEFAULT) {
         nla_put_u8(msg, L2TP_ATTR_L2SPEC_LEN, 4);
+    }
+    if (cfg->pppoe_session_id) {
+        nla_put_u16(msg, L2TP_ATTR_PPPOE_SESSION_ID, cfg->pppoe_session_id);
+        nla_put(msg, L2TP_ATTR_PPPOE_PEER_MAC_ADDR, 6, cfg->pppoe_peer_mac);
     }
     /* FIXME - configure l2spec_type tx/rx values separately here
      * when support is available in the kernel.

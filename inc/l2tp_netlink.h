@@ -45,6 +45,8 @@ struct l2tp_session_nl_config {
     char *ifname;
     enum l2tp_api_session_l2spec_type l2spec_type;
     enum l2tp_api_session_l2spec_type peer_l2spec_type;
+    uint8_t pppoe_peer_mac[6];
+    uint16_t pppoe_session_id;
 };
 
 
