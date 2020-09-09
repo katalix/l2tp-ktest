@@ -57,6 +57,11 @@ seqnum_SRCS := $(SRCDIR)/seqnum.c $(COMMON_SOURCES)
 seqnum_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,seqnum))
 
+# pppoe_sess_pkt
+pppoe_sess_pkt_SRCS := $(SRCDIR)/pppoe_sess_pkt.c $(COMMON_SOURCES)
+pppoe_sess_pkt_LIBS := $(COMMON_LIBS)
+$(eval $(call buildapp,pppoe_sess_pkt))
+
 # syzbot reproducers
 ifeq ($(OPT_NO_SYZBOT_APPS),0)
 include $(SRCDIR)/syzbot/syzbot.mk
