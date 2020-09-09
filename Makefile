@@ -62,6 +62,11 @@ pppoe_sess_pkt_SRCS := $(SRCDIR)/pppoe_sess_pkt.c $(COMMON_SOURCES)
 pppoe_sess_pkt_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,pppoe_sess_pkt))
 
+# getstats
+getstats_SRCS := $(SRCDIR)/getstats.c $(COMMON_SOURCES)
+getstats_LIBS := $(COMMON_LIBS)
+$(eval $(call buildapp,getstats))
+
 # syzbot reproducers
 ifeq ($(OPT_NO_SYZBOT_APPS),0)
 include $(SRCDIR)/syzbot/syzbot.mk
