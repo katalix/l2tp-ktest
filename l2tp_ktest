@@ -139,6 +139,7 @@ have_l2tpip_ipv6() { test $(kernel_version $(current_kernel_version)) -ge $(kern
 have_ipv6_peer() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 11 0); }
 have_ip_netns() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 8 0); }
 have_udp_encap_destroy() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 9 0); }
+have_l2tp_ac_pppoe() { grep -q l2tp_ac_pppoe /lib/modules/$(uname -r)/modules.dep; }
 
 # Tunnel / session lifetimes
 
@@ -309,6 +310,17 @@ test $HAVE_IP_NETNS -eq 1 && log "Have net namespaces" || log "Have no net names
 # Check whether kernel supports the UDP socket destructor hook
 have_udp_encap_destroy && HAVE_UDP_ENCAP_DESTROY=1 || HAVE_UDP_ENCAP_DESTROY=0
 test $HAVE_UDP_ENCAP_DESTROY -eq 1 && log "Have UDP encap_destroy hook" || log "Have no UDP encap_destroy hook"
+
+# Check whether kernel supports the L2TP AC/PPPoE driver
+have_l2tp_ac_pppoe && HAVE_L2TP_AC_PPPOE=1 || HAVE_L2TP_AC_PPPOE=0
+test $HAVE_L2TP_AC_PPPOE -eq 1 && log "Have L2TP AC/PPPoE driver" || log "Have no L2TP AC/PPPoE driver"
+
+# AC/PPPoE tests require the name of a local Ethernet interface
+ETH_IFNAME=$(ip link | \
+    awk '/^[0-9]+:/ { gsub(/:/, "", $2); ifname=$2 }
+         /link\/ether/ { print ifname; f=1; exit }
+         END { exit f?0:1 }') || die "Can't locate Ethernet interface"
+log "Have Ethernet interface $ETH_IFNAME"
 
 # L2TPv2, IPv4
 tc_api_v2_inet_nopw() { v2_tunl_check inet; }
