@@ -226,19 +226,19 @@ v3_tunl_check()
 {
     # We should be able to destroy a managed tunnel using both the socket
     # and the netlink APIs
-    managed_tunl_check 3 netlink netlink $1 $2 $3
-    managed_tunl_check 3 netlink socket $1 $2 $3
+    managed_tunl_check 3 netlink netlink "$1" "$2" "$3"
+    managed_tunl_check 3 netlink socket "$1" "$2" "$3"
 
     # In the special case of PPP pseudowires, there is a socket API for
     # tunnel and session creation, so check all permutations of that
     if test "$3" = "ppp" && test "$1" = "udp"
     then
-        managed_tunl_check 3 socket netlink $1 $2 $3
-        managed_tunl_check 3 socket socket $1 $2 $3
+        managed_tunl_check 3 socket netlink "$1" "$2" "$3"
+        managed_tunl_check 3 socket socket "$1" "$2" "$3"
     fi
 
     # Unmanaged tunnels are only accessible via the netlink API
-    unmanaged_tunl_check 3 netlink netlink $1 $2 $3
+    unmanaged_tunl_check 3 netlink netlink "$1" "$2" "$3"
 }
 
 # L2TPv2 is UDP encap, PPP pw only
@@ -248,10 +248,10 @@ v2_tunl_check()
 {
     # We should be able to create/destroy a managed tunnel using both the
     # socket and the netlink APIs
-    managed_tunl_check 2 netlink netlink udp $1 $2
-    managed_tunl_check 2 netlink socket udp $1 $2
-    managed_tunl_check 2 socket netlink udp $1 $2
-    managed_tunl_check 2 socket socket udp $1 $2
+    managed_tunl_check 2 netlink netlink udp "$1" "$2"
+    managed_tunl_check 2 netlink socket udp "$1" "$2"
+    managed_tunl_check 2 socket netlink udp "$1" "$2"
+    managed_tunl_check 2 socket socket udp "$1" "$2"
 
     # Unmanaged v2 tunnels aren't allowed
 }
