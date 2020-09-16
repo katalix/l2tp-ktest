@@ -18,8 +18,6 @@ PAUSE_ON_FAIL=no
 
 which ping6 > /dev/null 2>&1 && ping6=$(which ping6) || ping6=$(which ping)
 
-die() { echo "FATAL: $@" 1>&2; exit 1; }
-
 ################################################################################
 #
 _check_failed()
@@ -385,6 +383,45 @@ test_l2tp_busy_shutdown()
     check_not $? 0
 }
 
+show_usage()
+{
+    cat << __EOF__
+    Name:   $(basename $0)
+    Desc:   A wrapper script for running various data path tests
+    Usage:  $(basename $0) [options] <mode> <mode specific args>
+        -h  print this usage information
+        -v  enable verbose logging
+        -p  pause on failure, rather than continuing
+
+        Test modes and their arguments are as follows:
+
+            datapath <l2tp version> <socket family> <encap> <pwtype> <cookie length>
+
+            e.g.  datapath 3 inet6 ip ppp 4
+
+            The datapath test sets up an L2TP session between two network namespaces,
+            and uses the ping utility to exercise the session datapath.  The test validates
+            that large and small packets are successfully transmitted.
+
+            cookie_mismatch <socket family> <encap> <pwtype> <cookie length> <bad cookie length>
+
+            e.g.  cookie_mismatch inet udp eth 4 4
+
+            The L2TPv3-specific cookie_mismatch test sets up an L2TP session between
+            two network namespaces, and uses the ping utility to exercise the session
+            datapath.  The sessions are misconfigured such that cookies mismatch, and
+            the test validates that the ping between the session interfaces fails.
+
+            data_shutdown <l2tp version> <socket family> <encap> <pwtype>
+
+            e.g.  data_shutdown 3 inet ip eth
+
+            The data_shutdown test sets up an L2TP session between two network namespaces,
+            and runs the ping utility to exercise the session datapath.  The namespaces
+            are then torn down, and their exit is validated.
+__EOF__
+}
+
 ################################################################################
 # main
 
@@ -392,9 +429,10 @@ declare -i nfail=0
 
 testid=""
 
-while getopts pt:v o
+while getopts hpv o
 do
     case $o in
+        h) show_usage; exit 0;;
         t) testid=$OPTARG;;
         p) PAUSE_ON_FAIL=yes;;
         v) VERBOSE=$(($VERBOSE + 1));;
@@ -402,9 +440,14 @@ do
     esac
 done
 shift $((OPTIND-1))
+testid="$1"
+shift
 args="$@"
 
-test -n "$testid" || die "TestId arg missing"
+test -n "$testid" || {
+    show_usage
+    exit 1
+}
 
 trap cleanup EXIT
 
