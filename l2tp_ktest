@@ -22,27 +22,23 @@ err() { log "ERROR: $@" 1>&2; false; }
 die() { log "FATAL: $@" 1>&2; exit 1; }
 dbg() { test $VERBOSE -ne 0 && log "$@"; }
 
+KMODREFLEAK_BEFORE=""
 kmodrefleak_setup()
 {
     if test 1 -eq $DO_KMODREFLEAK_CHECK -o "$1" = "force"
     then
-        mkdir -p /tmp/l2tp-ktest
-        lsmod | grep l2tp > /tmp/l2tp-ktest/before
+        KMODREFLEAK_BEFORE="$(lsmod | grep l2tp)"
     fi
 }
 
 kmodrefleak_check()
 {
-    ret=0
+    local ret=0
     if test 1 -eq $DO_KMODREFLEAK_CHECK -o "$1" = "force"
     then
         # wait for netdev shutdown grace period before testing module refcounts
         sleep 2
-        cd /tmp/l2tp-ktest
-        lsmod | grep l2tp > after
-        diff -u before after || ret=1
-        rm -f before after
-        cd -
+        diff -u <( echo "$KMODREFLEAK_BEFORE" ) <( lsmod | grep l2tp ) || ret=1
     fi
     return $ret
 }
