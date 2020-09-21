@@ -1,0 +1,581 @@
+#!/bin/bash
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Network namespace wrapper for running L2TP tests in network namespaces.
+#
+
+VERBOSE=0
+
+log() { echo "[$(date)] $*"; }
+err() { log "error: $*" 1>&2; false; }
+dbg() { test $VERBOSE -ne 0 && log "$@"; }
+
+check()
+{
+    if ! $*
+    then
+        err "$* failed on line ${BASH_LINENO[0]} in ${FUNCNAME[1]}"
+        exit 1
+    fi
+}
+
+# $1 -- file path
+# $2 -- sample interval
+# $3 -- max number of checks to perform
+# $4 -- regexp to search for in file
+wait_file_contains()
+{
+    local filename="$1"
+    local interval="$2"
+    local max_polls="$3"
+    local match="$4"
+    local n
+
+    for n in $(seq 0 $max_polls)
+    do
+        grep -q "$match" "$filename" 2>/dev/null && return
+        sleep $interval
+    done
+    false
+}
+
+#
+# Network namespace helpers
+#
+
+# $1 -- namespace
+netns_ping()
+{
+    local ns="$1"
+    local ping
+    shift
+    echo "$@" | grep -q ":" && ping=$PING6 || ping=ping
+    dbg "$ns $ping $@"
+    ip netns exec $ns $ping $@
+}
+
+# $1 -- namespace
+# $2 -- tid
+# $3 -- sid
+# Reports tx/rx bytes packets counts, whitespace delimited
+netns_get_stats()
+{
+    local ns=$1
+    local tid=$2
+    local sid=$3
+    ip netns exec $ns ./getstats $tid $sid \
+        | grep "^.x.*pkts/bytes/errors" | grep -o '.x [0-9]\+/[0-9]\+/[0-9]\+' | tr '/' ' '
+}
+
+# $1 -- netns name
+# $2 -- lo inet address
+# $3 -- lo inet6 address
+netns_create_ns()
+{
+    local ns="$1"
+    local addr="$2"
+    local addr6="$3"
+
+    dbg "create netns $ns"
+
+    ip netns add $ns
+
+    ip -netns $ns link set lo up
+    test -n "$addr" && ip -netns $ns addr add dev lo $addr
+    test -n "$addr6" && ip -netns $ns -6 addr add dev lo $addr6
+
+    ip -netns $ns ro add unreachable default metric 8192
+    ip -netns $ns -6 ro add unreachable default metric 8192
+
+    ip netns exec $ns sysctl -qw net.ipv4.ip_forward=1
+    test -f /proc/sys/net/ipv6/conf/all/keep_addr_on_down && \
+        ip netns exec $ns sysctl -qw net.ipv6.conf.all.keep_addr_on_down=1
+    ip netns exec $ns sysctl -qw net.ipv6.conf.all.forwarding=1
+    ip netns exec $ns sysctl -qw net.ipv6.conf.default.forwarding=1
+    ip netns exec $ns sysctl -qw net.ipv6.conf.default.accept_dad=0
+}
+
+# $1 -- netns name
+netns_destroy_ns()
+{
+    local job
+    for job in $(ip netns pids $1 2>/dev/null)
+    do
+        kill $job && wait $job
+    done
+    ip netns del $ns 2>/dev/null
+}
+
+# $1 -- netns A name
+# $2 -- netns A dev ifname
+# $3 -- netns A dev inet address
+# $4 -- netns A dev inet6 address
+# $5 -- netns B name
+# $6 -- netns B dev ifname
+# $7 -- netns B dev inet address
+# $8 -- netns B dev inet6 address
+netns_connect_ns_veth()
+{
+    local ns1="$1"
+    local ns1_dev="$2"
+    local ns1_addr="$3"
+    local ns1_addr6="$4"
+    local ns2="$5"
+    local ns2_dev="$6"
+    local ns2_addr="$7"
+    local ns2_addr6="$8"
+
+    dbg "connect $ns1 $ns1_dev $ns1_addr $ns1_addr6 -> $ns2 $ns2_dev $ns2_addr $ns2_addr6"
+
+    ip -netns $ns1 li add $ns1_dev type veth peer name tmp
+    ip -netns $ns1 li set $ns1_dev up
+    ip -netns $ns1 li set tmp netns $ns2 name $ns2_dev
+    ip -netns $ns2 li set $ns2_dev up
+
+    if test -n "$ns1_addr"
+    then
+        ip -netns $ns1 addr add dev $ns1_dev $ns1_addr
+        ip -netns $ns2 addr add dev $ns2_dev $ns2_addr
+    fi
+
+    if test -n "$ns1_addr6"
+    then
+        ip -netns $ns1 addr add dev $ns1_dev $ns1_addr6
+        ip -netns $ns2 addr add dev $ns2_dev $ns2_addr6
+    fi
+}
+
+# $1 -- lns netns name
+# $2 -- lns address
+# $3 -- lns port
+# $4 -- lns l2tp interface address
+# $5 -- lns sess_dataif extra args
+# $6 -- lns lo interface address
+# $7 -- lac netns name
+# $8 -- lac address
+# $9 -- lac port
+# $10 -- lac l2tp interface address
+# $11 -- lac sess_dataif extra args
+# $12 -- lac lo interface address
+netns_sess_dataif_pair()
+{
+    local lns="$1"
+    local lns_addr="$2"
+    local lns_port="$3"
+    local lns_l2tp_addr="$4"
+    local lns_sess_dataif_args="$5"
+    local lns_lo_addr="$6"
+
+    local lac="$7"
+    local lac_addr="$8"
+    local lac_port="$9"
+    local lac_l2tp_addr="${10}"
+    local lac_sess_dataif_args="${11}"
+    local lac_lo_addr="${12}"
+
+    local lns_l2tp_if
+    local lac_l2tp_if
+
+    local inet6=""
+    local nm=32
+    local is_debug=0
+
+    test -n "$OPT_DEBUG" && is_debug=1
+
+    echo "$lns_l2tp_addr" | grep -q ":" && {
+        inet6="-6"
+        nm=128
+    }
+
+    dbg "create L2TP session $lns -> $lac"
+
+    rm -f /tmp/l2tp-ktest-sess-dataif-s /tmp/l2tp-ktest-sess-dataif-c
+
+    # Always make sess_dataif be quiet since its output isn't useful in this context.
+    # Just in case the user specified OPT_DEBUG, unset it now since sess_dataif will
+    # abort if both OPT_DEBUG and OPT_QUIET are defined.
+    unset OPT_DEBUG
+    OPT_QUIET=1 ip netns exec $lns ./sess_dataif \
+        -L $lns_addr/$lns_port \
+        -P $lac_addr/$lac_port \
+        $lns_sess_dataif_args &
+
+    OPT_QUIET=1 ip netns exec $lac ./sess_dataif -C \
+        -L $lac_addr/$lac_port \
+        -P $lns_addr/$lns_port \
+        $lac_sess_dataif_args &
+    test $is_debug -eq 1 && export OPT_DEBUG=1
+
+    # Wait for interface(s) with the name containing substring "0",
+    # since this will match either "ppp0" or "l2tpeth0".
+    wait_file_contains /tmp/l2tp-ktest-sess-dataif-s 0.1 10 "0" || {
+        err "Timeout waiting for LNS L2TP session interface"
+        return 1
+    }
+    lns_l2tp_if=$(cut -d " " -f 1 /tmp/l2tp-ktest-sess-dataif-s)
+    wait_file_contains /tmp/l2tp-ktest-sess-dataif-c 0.1 10 "0" || {
+        err "Timeout waiting for LAC L2TP session interface"
+        return 1
+    }
+    lac_l2tp_if=$(cut -d " " -f 1 /tmp/l2tp-ktest-sess-dataif-c)
+
+    # Bring up the l2tp interfaces and assign addresses
+    ip -netns $lns link set dev $lns_l2tp_if up && \
+        ip -netns $lns addr add dev $lns_l2tp_if $lns_l2tp_addr peer $lac_l2tp_addr && \
+        ip -netns $lac link set dev $lac_l2tp_if up && \
+        ip -netns $lac addr add dev $lac_l2tp_if $lac_l2tp_addr peer $lns_l2tp_addr || {
+        err "Failed to bring up LNS/LAC l2tp interfaces"
+        return 1
+    }
+
+    # Add routing rules for the lac/lns to reach one another's lo interfaces
+    ip -netns $lns $inet6 route add $lac_lo_addr/$nm via $lac_l2tp_addr && \
+        ip -netns $lac $inet6 route add $lns_lo_addr/$nm via $lns_l2tp_addr || {
+        err "Failed to set up LAC/LNS routing"
+        return 1
+    }
+}
+
+###############################################################################
+# Three host topology.
+#
+# Both lac and lns have veth connections to the router (this is eth0 in
+# the lac/lns namespace).
+#
+# Both lac and lns allow forwarding such that packets destined to their
+# loopback interface can be forwarded via. the l2tp interface.
+#
+#             lac            | router |  lns
+#                            |        |
+#             lo       l2tp  |        |  l2tp       lo
+#   172.16.101.1 172.16.1.1  |        |  172.16.1.2 172.16.101.2
+#    fc00:101::1  fc00:1::1  |        |  fc00:1::2  fc00:101::2
+#                            |        |
+#                       eth0 |        | eth0
+#                   10.1.1.1 |        | 10.1.2.1
+#              2001:db8:1::1 |        | 2001:db8:2::1
+#
+# This configuration allows the lac to ping the lns via. its lo interface
+# so we can exercise the l2tp datapath in various configurations.
+
+# $1 -- l2tp version
+# $2 -- socket family
+# $3 -- encap
+# $4 -- pwtype
+# $5 -- lns sess_dataif extra args
+# $6 -- lac sess_dataif extra args
+three_host_setup()
+{
+    local base_args="-v $1 -f $2 -e $3 -p $4"
+    local lns_args="$base_args $5"
+    local lac_args="$base_args $6"
+
+    CLEANUP_FUNCTIONS="$CLEANUP_FUNCTIONS three_host_cleanup"
+    three_host_cleanup
+
+    check netns_create_ns lac 172.16.101.1/32 fc00:101::1/128
+    check netns_create_ns lns 172.16.101.2/32 fc00:101::2/128
+    check netns_create_ns router
+
+    check netns_connect_ns_veth lac eth0 10.1.1.1/24 2001:db8:1::1/64 \
+        router eth1 10.1.1.2/24 2001:db8:1::2/64
+    check netns_connect_ns_veth lns eth0 10.1.2.1/24 2001:db8:2::1/64 \
+        router eth2 10.1.2.2/24 2001:db8:2::2/64
+
+    check ip -netns lac route add 10.1.2.0/24 via 10.1.1.2
+    check ip -netns lac -6 route add 2001:db8:2::/64 via 2001:db8:1::2
+    check ip -netns lns route add 10.1.1.0/24 via 10.1.2.2
+    check ip -netns lns -6 route add 2001:db8:1::/64 via 2001:db8:2::2
+
+    if test "$2" = "inet"
+    then
+        netns_sess_dataif_pair \
+            lns 10.1.2.1 1701 172.16.1.2 "$lns_args" 172.16.101.2 \
+            lac 10.1.1.1 1701 172.16.1.1 "$lac_args" 172.16.101.1
+    else
+        netns_sess_dataif_pair \
+            lns 2001:db8:2::1 1701 fc00:1::2 "$lns_args" fc00:101::2 \
+            lac 2001:db8:1::1 1701 fc00:1::1 "$lac_args" fc00:101::1
+    fi
+    check test $? -eq 0
+}
+
+three_host_cleanup()
+{
+    local ns
+    for ns in lac lns router; do netns_destroy_ns $ns; done
+    rm -f /tmp/l2tp-ktest-sess-dataif-s /tmp/l2tp-ktest-sess-dataif-c
+}
+
+# subtract $1 from $2
+sub_stats()
+{
+    { echo "$2"; echo "$1"; } | awk '
+        /^tx/ {
+            if (NR>2) {
+                print "tx",$2-tx[0],$3-tx[1],$4-tx[2];
+            } else {
+                tx[0]=$2; tx[1]=$3; tx[2]=$4;
+            }
+        }
+        /^rx/ {
+            if (NR>2) {
+                print "rx",$2-rx[0],$3-rx[1],$4-rx[2];
+            } else {
+                rx[0]=$2; rx[1]=$3; rx[2]=$4;
+            }
+        }
+    '
+}
+
+# $1 -- l2tp version
+# $2 -- socket family
+# $3 -- encap
+# $4 -- pwtype
+# $5 -- cookie length
+test_datapath()
+{
+    local l2tp_version="$1"
+    local family="$2"
+    local encap="$3"
+    local pwtype="$4"
+    local cookie_len="$5"
+    local lns_args
+    local lac_args
+
+    local lac_stats_pre
+    local lac_stats_post
+    local lac_stats_delta
+    local lns_stats_pre
+    local lns_stats_post
+    local lns_stats_delta
+
+    if test "$cookie_len" = "4"
+    then
+        lac_args="-k 01234567 -K 89abcdef"
+        lns_args="-K 01234567 -k 89abcdef"
+    elif test "$cookie_len" = "8"
+    then
+        lac_args="-k 0123456789abcdef -K fedcba9876543210"
+        lns_args="-K 0123456789abcdef -k fedcba9876543210"
+    fi
+
+    three_host_setup "$l2tp_version" "$family" "$encap" "$pwtype" "$lns_args" "$lac_args"
+
+    # After bringing interfaces up there's a bit of unrelated traffic due to
+    # stack discovery and/or background processes.  So sleep a moment to let
+    # that drop off before gathering pre-ping stats.
+    sleep 2
+
+    lns_stats_pre=$(netns_get_stats lns 1 1000)
+    check test $? -eq 0
+    test -n "$lns_stats_pre" || check false
+
+    lac_stats_pre=$(netns_get_stats lac 2 2001)
+    check test $? -eq 0
+    test -n "$lac_stats_pre" || check false
+
+    if test "$family" = "inet"
+    then
+        check netns_ping lac -c1 -w1 -I 172.16.101.1 172.16.101.2
+        check netns_ping lac -c1 -w1 -s 1600 -I 172.16.101.1 172.16.101.2
+    else
+        check netns_ping lac -c1 -w1 -I fc00:101::1 fc00:101::2
+        check netns_ping lac -c1 -w1 -s 1600 -I fc00:101::1 fc00:101::2
+    fi
+
+    lns_stats_post=$(netns_get_stats lns 1 1000)
+    check test $? -eq 0
+    test -n "$lns_stats_post" || check false
+
+    lac_stats_post=$(netns_get_stats lac 2 2001)
+    check test $? -eq 0
+    test -n "$lac_stats_post" || check false
+
+    lac_stats_delta="$(sub_stats "$lac_stats_post" "$lac_stats_pre")"
+    dbg "lac dataplane stats: $(echo $lac_stats_delta | tr '\n' ' ')"
+
+    lns_stats_delta="$(sub_stats "$lns_stats_post" "$lns_stats_pre")"
+    dbg "lns dataplane stats: $(echo $lns_stats_delta | tr '\n' ' ')"
+
+    # We expect lns to receive everything lac sent
+    check diff -u <( echo "$lac_stats_delta" | grep ^tx | cut -c4- ) \
+            <( echo "$lns_stats_delta" | grep ^rx | cut -c4- )
+
+    # we expect lac to receive everything lns sent
+    check diff -u <( echo "$lac_stats_delta" | grep ^rx | cut -c4- ) \
+            <( echo "$lns_stats_delta" | grep ^tx | cut -c4- )
+}
+
+# $1 -- socket family
+# $2 -- encap
+# $3 -- pwtype
+# $4 -- cookie length
+# $5 -- bad cookie length
+test_cookie_mismatch()
+{
+    local l2tp_version=3 # cookies are L2TPv3 only
+    local family="$1"
+    local encap="$2"
+    local pwtype="$3"
+    local cookie_len="$4"
+    local bad_cookie_len="$5"
+
+    local lns_args
+    local lac_args
+
+    case ${cookie_len}${bad_cookie_len} in
+        04)
+            lac_args="-k 1122334455667788"
+            ;;
+        44)
+            lns_args="-k 01234567 -K 89abcdef"
+            lac_args="-K 01234567 -k 11223344"
+            ;;
+        48)
+            lns_args="-k 01234567 -K 89abcdef"
+            lac_args="-K 01234567 -k 1122334455667788"
+            ;;
+        84)
+            lns_args="-k 0123456789abcdef -K fedcba9876543210"
+            lac_args="-K 0123456789abcdef -k 11223344"
+            ;;
+        88)
+            lns_args="-k 0123456789abcdef -K fedcba9876543210"
+            lac_args="-K 0123456789abcdef -k 1122334455667788"
+            ;;
+        08)
+            lac_args="-k 1122334455667788"
+            ;;
+        *) check test -z "Cookie length and bad cookie length must 0, 4 or 8" ;;
+    esac
+
+    three_host_setup "$l2tp_version" "$family" "$encap" "$pwtype" "$lns_args" "$lac_args"
+
+    if test "$family" = "inet"
+    then
+        netns_ping lac -c1 -w1 -I 172.16.101.1 172.16.101.2
+    else
+        netns_ping lac -c1 -w1 -I fc00:101::1 fc00:101::2
+    fi
+
+    # expect ping to fail due to cookie mismatch
+    check test $? -ne 0
+
+    # TODO: check cookie discards are reflected in dataplane stats
+}
+
+# $1 -- l2tp version
+# $2 -- socket family
+# $3 -- encap
+# $4 -- pwtype
+test_data_shutdown()
+{
+    local l2tp_version="$1"
+    local family="$2"
+    local encap="$3"
+    local pwtype="$4"
+
+    local lns_args="-T 2"
+    local lac_args="-T 2"
+
+    three_host_setup "$l2tp_version" "$family" "$encap" "$pwtype" "$lns_args" "$lac_args"
+
+    if test "$family" = "inet"
+    then
+        netns_ping lac -q -f -w3 -I 172.16.101.1 172.16.101.2
+    else
+        netns_ping lac -q -f -w3 -I fc00:101::1 fc00:101::2
+    fi
+
+    three_host_cleanup
+
+    ( ip netns exec lac true || ip netns exec lns true || ip netns exec router true ) 2>/dev/null
+    check test $? -ne 0
+}
+
+cleanup()
+{
+    local ret=$?
+    local f
+    for f in $CLEANUP_FUNCTIONS; do $f; done
+    return $ret
+}
+
+show_usage()
+{
+    cat << __EOF__
+    Name:   $(basename $0)
+    Desc:   A wrapper script for running various data path tests
+    Usage:  $(basename $0) [options] <mode> <mode specific args>
+        -h  print this usage information
+        -v  enable verbose logging
+        -p  pause on failure, rather than continuing
+
+        Test modes and their arguments are as follows:
+
+            datapath <l2tp version> <socket family> <encap> <pwtype> <cookie length>
+
+            e.g.  datapath 3 inet6 ip ppp 4
+
+            The datapath test sets up an L2TP session between two network namespaces,
+            and uses the ping utility to exercise the session datapath.  The test validates
+            that large and small packets are successfully transmitted.
+
+            cookie_mismatch <socket family> <encap> <pwtype> <cookie length> <bad cookie length>
+
+            e.g.  cookie_mismatch inet udp eth 4 4
+
+            The L2TPv3-specific cookie_mismatch test sets up an L2TP session between
+            two network namespaces, and uses the ping utility to exercise the session
+            datapath.  The sessions are misconfigured such that cookies mismatch, and
+            the test validates that the ping between the session interfaces fails.
+
+            data_shutdown <l2tp version> <socket family> <encap> <pwtype>
+
+            e.g.  data_shutdown 3 inet ip eth
+
+            The data_shutdown test sets up an L2TP session between two network namespaces,
+            and runs the ping utility to exercise the session datapath.  The namespaces
+            are then torn down, and their exit is validated.
+__EOF__
+}
+
+#
+# Entry point
+#
+
+CLEANUP_FUNCTIONS=""
+trap cleanup EXIT
+
+which ping6 > /dev/null 2>&1 && PING6=$(which ping6) || PING6=$(which ping)
+
+while getopts hv o
+do
+    case $o in
+        h) show_usage; exit 0;;
+        v) VERBOSE=1;;
+        *) exit 1;;
+    esac
+done
+shift $((OPTIND-1))
+mode="$1"
+shift
+args=$*
+
+test -n "$mode" || {
+    show_usage
+    exit 0
+}
+
+test $VERBOSE -eq 0 && {
+    exec 1>/dev/null
+}
+
+case $mode in
+    datapath) test_datapath $args ;;
+    cookie_mismatch) test_cookie_mismatch $args ;;
+    data_shutdown) test_data_shutdown $args ;;
+    *) err "Unrecognised mode \"$mode\""; exit 1;;
+esac

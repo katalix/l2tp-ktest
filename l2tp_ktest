@@ -259,7 +259,7 @@ v2_tunl_check()
 # $5 -- cookie_len
 session_data_check()
 {
-    OPT_QUIET=1 check $(dirname $0)/sess_datapath.sh datapath $@
+    check $(dirname $0)/netns_datapath datapath $@
 }
 
 # $1 -- family
@@ -269,7 +269,7 @@ session_data_check()
 # $5 -- bad_cookie_len
 cookie_mismatch_check()
 {
-    OPT_QUIET=1 check $(dirname $0)/sess_datapath.sh cookie_mismatch $@
+    $(dirname $0)/netns_datapath cookie_mismatch $@
 }
 
 # $1 -- L2TP version
@@ -278,7 +278,7 @@ cookie_mismatch_check()
 # $4 -- pseudowire
 data_shutdown_check()
 {
-    OPT_QUIET=1 check $(dirname $0)/sess_datapath.sh data_shutdown $@
+    check $(dirname $0)/netns_datapath data_shutdown $@
 }
 
 #
