@@ -281,6 +281,14 @@ data_shutdown_check()
     check $(dirname $0)/netns_datapath data_shutdown $@
 }
 
+# $1 -- L2TP version
+# $2 -- family
+# $3 -- encap
+ac_pppoe_data_check()
+{
+    check $(dirname $0)/netns_datapath ac_pppoe $@
+}
+
 #
 # Entry point
 #
@@ -461,6 +469,13 @@ then
     tc_data_shutdown_v3_inet_udp_eth() { data_shutdown_check 3 inet udp eth; }
     tc_data_shutdown_v3_inet_ip_eth() { data_shutdown_check 3 inet ip eth; }
 
+    if test $HAVE_L2TP_AC_PPPOE -eq 1
+    then
+        tc_ac_pppoe_v2_inet_udp() { ac_pppoe_data_check 2 inet udp; }
+        tc_ac_pppoe_v3_inet_udp() { ac_pppoe_data_check 3 inet udp; }
+        tc_ac_pppoe_v3_inet_ip() { ac_pppoe_data_check 3 inet ip; }
+    fi
+
     # Datapath tests require ip addr add <local-addr> peer <peer-addr> support
     if test $HAVE_IPV6_PEER -eq 1
     then
@@ -483,6 +498,12 @@ then
         tc_data_shutdown_v3_inet6_udp_ppp() { data_shutdown_check 3 inet6 udp ppp; }
         tc_data_shutdown_v3_inet6_udp_eth() { data_shutdown_check 3 inet6 udp eth; }
 
+        if test $HAVE_L2TP_AC_PPPOE -eq 1
+        then
+            tc_ac_pppoe_v2_inet6_udp() { ac_pppoe_data_check 2 inet6 udp; }
+            tc_ac_pppoe_v3_inet6_udp() { ac_pppoe_data_check 3 inet6 udp; }
+        fi
+
         if test $HAVE_L2TPIP_IPV6 -eq 1
         then
             tc_data_v3_inet6_ip_ppp() { session_data_check 3 inet6 ip ppp 0; }
@@ -499,6 +520,11 @@ then
     
             tc_data_shutdown_v3_inet6_ip_ppp() { data_shutdown_check 3 inet6 ip ppp; }
             tc_data_shutdown_v3_inet6_ip_eth() { data_shutdown_check 3 inet6 ip eth; }
+
+            if test $HAVE_L2TP_AC_PPPOE -eq 1
+            then
+                tc_ac_pppoe_v3_inet6_ip() { ac_pppoe_data_check 3 inet6 ip; }
+            fi
         fi
     fi
 fi
