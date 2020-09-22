@@ -99,7 +99,7 @@ void show_usage(const char *myname)
     printf("          -v    specify L2TP version (2 or 3: default is 2)\n");
     printf("          -f    specify tunnel socket address family (inet or inet6: default is inet)\n");
     printf("          -e    specify tunnel encapsulation (udp or ip: default is udp)\n");
-    printf("          -p    specify session pseudowire type (ppp or eth: default ppp)\n");
+    printf("          -p    specify session pseudowire type (ppp, pppac, or eth: default ppp)\n");
     printf("          -k    local cookie (4 or 8 hex bytes, default no cookie)\n");
     printf("          -K    peer cookie (4 or 8 hex bytes, default no cookie)\n");
     printf("\n");
@@ -113,6 +113,12 @@ void show_usage(const char *myname)
     printf("          -t    specify number of tunnels to create. Default 1\n");
     printf("          -s    specify number of sessions to create in each tunnel. Default 1\n");
     printf("          -T    timeout in seconds. On expiry, all tunnel sockets are closed. Default 0\n");
+    printf("\n");
+    printf("          Pseudowire-specific options:\n");
+    printf("\n");
+    printf("          -N    specify session interface name (eth and pppac pseudowires)\n");
+    printf("          -i    specify PPPoE session ID (pppac pseudowire only)\n");
+    printf("          -M    specify PPPoE peer MAC address (pppac pseudowire only)\n");
     printf("\n");
 }
 
@@ -419,7 +425,7 @@ int main(int argc, char **argv)
     };
 
     /* Parse commandline, doing basic sanity checking as we go */
-    while ((opt = getopt(argc, argv, "hCv:c:d:f:e:p:P:L:t:s:T:m:k:K:")) != -1) {
+    while ((opt = getopt(argc, argv, "hCv:c:d:f:e:p:P:L:t:s:T:m:k:K:N:i:M:")) != -1) {
         switch(opt) {
         case 'h':
             show_usage(argv[0]);
@@ -441,27 +447,15 @@ int main(int argc, char **argv)
                 die("Invalid api %s\n", optarg);
             break;
         case 'f':
-            if (0 == strcmp("inet", optarg))
-                lo.family = AF_INET;
-            else if (0 == strcmp("inet6", optarg))
-                lo.family = AF_INET6;
-            else
+            if (!parse_socket_family(optarg, &lo.family))
                 die("Invalid address family %s\n", optarg);
             break;
         case 'e':
-            if (0 == strcmp("udp", optarg))
-                lo.protocol = IPPROTO_UDP;
-            else if (0 == strcmp("ip", optarg))
-                lo.protocol = IPPROTO_L2TP;
-            else
+            if (!parse_encap(optarg, &lo.protocol))
                 die("Invalid encapsulation %s\n", optarg);
             break;
         case 'p':
-            if (0 == strcmp("ppp", optarg))
-                lo.pseudowire = L2TP_API_SESSION_PW_TYPE_PPP;
-            else if (0 == strcmp("eth", optarg))
-                lo.pseudowire = L2TP_API_SESSION_PW_TYPE_ETH;
-            else
+            if (!parse_pseudowire_type(optarg, &lo.pseudowire))
                 die("Invalid pseudowire %s\n", optarg);
             break;
         case 'P':
@@ -498,6 +492,25 @@ int main(int argc, char **argv)
             }
             lo.peer_cookie_len = rc;
             break;
+        case 'N':
+            if (strlen(optarg) > sizeof(lo.ifname)-1)
+                die("Interface name \"%s\" is too long\n", optarg);
+            memcpy(lo.ifname, optarg, strlen(optarg));
+            break;
+        case 'i':
+            lo.pw.pppac.id = atoi(optarg);
+            break;
+        case 'M':
+            if (6 != sscanf(optarg,
+                        "%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8,
+                        &lo.pw.pppac.peer_mac[0],
+                        &lo.pw.pppac.peer_mac[1],
+                        &lo.pw.pppac.peer_mac[2],
+                        &lo.pw.pppac.peer_mac[3],
+                        &lo.pw.pppac.peer_mac[4],
+                        &lo.pw.pppac.peer_mac[5]))
+                die("Failed to parse MAC address \"%s\"\n", optarg);
+            break;
         default:
             die("failed to parse command line args\n");
         }
@@ -510,8 +523,9 @@ int main(int argc, char **argv)
      * options
      */
     if (lo.l2tp_version == 2) {
-        if (lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP)
-            die("L2TPv2 code supports PPP pseudowires only\n");
+        if (lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP
+            && lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP_AC)
+            die("L2TPv2 code supports PPP or PPPAC pseudowires only\n");
         if (lo.protocol != IPPROTO_UDP)
             die("L2TPv2 code supports UDP encapsulation only\n");
     }
@@ -535,7 +549,8 @@ int main(int argc, char **argv)
         lo.delete_api == L2TP_SOCKET_API ? "socket" : "netlink",
         lo.protocol == IPPROTO_UDP ? "UDP" : "IP",
         lo.family == AF_INET ? "inet" : "inet6",
-        lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP ? "PPP" : "ETH");
+        lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP ? "PPP" :
+            lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP_AC ? "PPPAC" : "ETH");
 
     run_tunnels(&lo, &ro);
     if (g_status_file) fclose(g_status_file);
