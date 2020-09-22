@@ -188,7 +188,12 @@ netns_sess_dataif_pair()
         nm=128
     }
 
+    lns_sess_dataif_args="-L $lns_addr/$lns_port -P $lac_addr/$lac_port $lns_sess_dataif_args"
+    lac_sess_dataif_args="-C -L $lac_addr/$lac_port -P $lns_addr/$lns_port $lac_sess_dataif_args"
+
     dbg "create L2TP session $lns -> $lac"
+    dbg "$lns: sess_dataif $lns_sess_dataif_args"
+    dbg "$lac: sess_dataif $lac_sess_dataif_args"
 
     rm -f /tmp/l2tp-ktest-sess-dataif-s /tmp/l2tp-ktest-sess-dataif-c
 
@@ -196,15 +201,9 @@ netns_sess_dataif_pair()
     # Just in case the user specified OPT_DEBUG, unset it now since sess_dataif will
     # abort if both OPT_DEBUG and OPT_QUIET are defined.
     unset OPT_DEBUG
-    OPT_QUIET=1 ip netns exec $lns ./sess_dataif \
-        -L $lns_addr/$lns_port \
-        -P $lac_addr/$lac_port \
-        $lns_sess_dataif_args &
+    OPT_QUIET=1 ip netns exec $lns ./sess_dataif $lns_sess_dataif_args &
 
-    OPT_QUIET=1 ip netns exec $lac ./sess_dataif -C \
-        -L $lac_addr/$lac_port \
-        -P $lns_addr/$lns_port \
-        $lac_sess_dataif_args &
+    OPT_QUIET=1 ip netns exec $lac ./sess_dataif $lac_sess_dataif_args &
     test $is_debug -eq 1 && export OPT_DEBUG=1
 
     # Wait for interface(s) with the name containing substring "0",
