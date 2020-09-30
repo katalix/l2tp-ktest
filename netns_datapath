@@ -5,11 +5,12 @@
 # Network namespace wrapper for running L2TP tests in network namespaces.
 #
 
-VERBOSE=0
+OPT_CHECK_STATS=0
+OPT_VERBOSE=0
 
 log() { echo "[$(date)] $*"; }
 err() { log "error: $*" 1>&2; false; }
-dbg() { test $VERBOSE -ne 0 && log "$@"; }
+dbg() { test $OPT_VERBOSE -ne 0 && log "$@"; }
 
 check()
 {
@@ -485,6 +486,8 @@ test_datapath()
     lns_stats_delta="$(sub_stats "$lns_stats_post" "$lns_stats_pre")"
     dbg "lns dataplane stats: $(echo $lns_stats_delta | tr '\n' ' ')"
 
+    test $OPT_CHECK_STATS -eq 0 && return
+
     # We expect lns to receive everything lac sent
     check diff -u <( echo "$lac_stats_delta" | grep ^tx | cut -c4- ) \
             <( echo "$lns_stats_delta" | grep ^rx | cut -c4- )
@@ -636,6 +639,7 @@ show_usage()
     Desc:   A wrapper script for running various data path tests
     Usage:  $(basename $0) [options] <mode> <mode specific args>
         -h  print this usage information
+        -s  check dataplane statistics where appropriate
         -v  enable verbose logging
         -p  pause on failure, rather than continuing
 
@@ -685,11 +689,12 @@ trap cleanup EXIT
 
 which ping6 > /dev/null 2>&1 && PING6=$(which ping6) || PING6=$(which ping)
 
-while getopts hv o
+while getopts hvs o
 do
     case $o in
         h) show_usage; exit 0;;
-        v) VERBOSE=1;;
+        v) OPT_VERBOSE=1;;
+        s) OPT_CHECK_STATS=1;;
         *) exit 1;;
     esac
 done
@@ -703,7 +708,7 @@ test -n "$mode" || {
     exit 0
 }
 
-test $VERBOSE -eq 0 && {
+test $OPT_VERBOSE -eq 0 && {
     exec 1>/dev/null
 }
 
