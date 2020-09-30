@@ -90,6 +90,8 @@ The test tools can be run on their own as well as by the test script:
   and to explore kernel context lifetimes,
 * *sess_dataif* can be used to create a managed session with it associated
   netdevice which can be used to test the data path. Two instances are required.
+* *netns_datapath* is a wrapper for *sess_dataif* which implements a range of tests
+  based on L2TP endpoints running in separate network namespaces
 * *tunl_delete_race* and *tunl_query_race* are designed to provoke race conditions
   in the kernel,
 * *seqnum* tests the kernel's data path sequence number handling,
