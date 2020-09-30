@@ -103,7 +103,7 @@ netns_destroy_ns()
     local job
     for job in $(ip netns pids $1 2>/dev/null)
     do
-        kill $job && wait $job
+        kill $job 2>/dev/null && wait $job 2>/dev/null
     done
     ip netns del $ns 2>/dev/null
 }
