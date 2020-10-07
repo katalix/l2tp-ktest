@@ -483,10 +483,11 @@ int kernel_tunnel_create(int tfd, struct l2tp_options *options, int *ctlsk)
     return ret;
 }
 
-static int kernel_session_create_nl(struct l2tp_options *options)
+static int kernel_session_create_nl(struct l2tp_options *options, struct l2tp_pw *pw)
 {
     assert(options);
     assert(options->create_api == L2TP_NETLINK_API);
+    assert(pw);
 
     struct l2tp_session_nl_config scfg = {
         .debug = opt_debug ? 0xff : 0,
@@ -512,33 +513,14 @@ static int kernel_session_create_nl(struct l2tp_options *options)
 
     if (0 == l2tp_nl_session_get(options->tid, options->sid, &sd)) {
         if (sd.ifname) {
-            strncpy(&options->ifname[0], sd.ifname, sizeof(options->ifname) - 1);
+            strncpy(&pw->ifname[0], sd.ifname, sizeof(pw->ifname) - 1);
             free(sd.ifname);
         }
     }
     return 0;
 }
 
-int kernel_session_create_pppox(struct l2tp_options *options, int *ctlsk, int *pppsk)
-{
-    assert(options);
-    assert(ctlsk); // expect control socket output variable, ppp socket output variable optional
-
-    *ctlsk = pppol2tp_session_ctrl_socket(options->family, options->l2tp_version, options->tid,
-                                          options->ptid, options->sid, options->psid);
-    if (*ctlsk < 0) return *ctlsk;
-
-    if (pppsk) {
-        int fd, unit = -1;
-        fd = ppp_generic_establish_ppp(*ctlsk, &unit);
-        if (fd < 0) return fd;
-        snprintf(&options->ifname[0], sizeof(options->ifname), "ppp%d", unit);
-        *pppsk = fd;
-    }
-    return 0;
-}
-
-int kernel_session_create_pppox_2(struct l2tp_options *opt, struct l2tp_pw *pw)
+int kernel_session_create_pppox(struct l2tp_options *opt, struct l2tp_pw *pw)
 {
     assert(opt);
     assert(pw);
@@ -556,43 +538,11 @@ int kernel_session_create_pppox_2(struct l2tp_options *opt, struct l2tp_pw *pw)
     }
 
     pw->typ.ppp.fd.pppox = pppox;
+    snprintf(&pw->ifname[0], sizeof(pw->ifname), "ppp%d", pw->typ.ppp.idx.unit);
     return 0;
 }
 
-int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk)
-{
-    assert(options);
-    assert(options->create_api == L2TP_SOCKET_API || options->create_api == L2TP_NETLINK_API);
-    assert(ctlsk);
-
-    int ret = -ENOSYS;
-
-    switch (options->create_api) {
-        case L2TP_SOCKET_API:
-            ret = kernel_session_create_pppox(options, ctlsk, pppsk);
-        break;
-        case L2TP_NETLINK_API:
-            ret = kernel_session_create_nl(options);
-            if (ret == 0) {
-                /* To actually bind the pppox session we still need to
-                 * call connect on a pppox socket :-/
-                 */
-                if (options->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP)
-                    ret = kernel_session_create_pppox(options, ctlsk, pppsk);
-            }
-        break;
-        case L2TP_UNDEFINED_API:
-            assert(!"Unhandled switch case");
-        break;
-    }
-
-    if (ret == 0) {
-        log("session %u/%u uses %s\n", options->tid, options->sid, options->ifname[0] ? options->ifname : "?");
-    }
-    return ret;
-}
-
-int kernel_session_create_2(struct l2tp_options *options, struct l2tp_pw *pw)
+int kernel_session_create(struct l2tp_options *options, struct l2tp_pw *pw)
 {
     assert(options);
     assert(options->create_api == L2TP_SOCKET_API || options->create_api == L2TP_NETLINK_API);
@@ -602,17 +552,17 @@ int kernel_session_create_2(struct l2tp_options *options, struct l2tp_pw *pw)
 
     switch (options->create_api) {
         case L2TP_SOCKET_API:
-            ret = kernel_session_create_pppox_2(options, pw);
+            ret = kernel_session_create_pppox(options, pw);
         break;
         case L2TP_NETLINK_API:
-            ret = kernel_session_create_nl(options);
+            ret = kernel_session_create_nl(options, pw);
             if (ret == 0) {
                 /* To actually bind the pppox session we still need to
                  * call connect on a pppox socket to instantiate the ppp_generic
                  * side of things.
                  */
                 if (options->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP)
-                    ret = kernel_session_create_pppox_2(options, pw);
+                    ret = kernel_session_create_pppox(options, pw);
             }
         break;
         case L2TP_UNDEFINED_API:

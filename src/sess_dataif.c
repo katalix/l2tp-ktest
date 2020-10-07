@@ -62,8 +62,7 @@ struct session_options {
     struct l2tp_options lo;
     struct runtime_options ro;
     struct tunnel_options *to;
-    int sfd;
-    int pppfd;
+    struct l2tp_pw pw;
 };
 
 struct tunnel_options {
@@ -160,30 +159,16 @@ static void do_create_tunnel(struct tunnel_options *to)
 
 static void do_create_session(struct session_options *so)
 {
-    //static int index = 0;
     int ret;
 
     assert(so);
 
-    assert(so->sfd < 0);
-
     dbg("session %u/%u -> peer %u/%u\n", so->lo.tid, so->lo.sid, so->lo.ptid, so->lo.psid);
 
-    ret = kernel_session_create(&so->lo, &so->sfd, &so->pppfd);
+    ret = kernel_session_create(&so->lo, &so->pw);
     if (ret) die("Failed to create kernel context for session %u/%u\n", so->lo.tid, so->lo.sid);
 
-    /* For PPP we expect the kernel session create to have created a session
-     * AF_PPPOX socket. Connect this to ppp.
-     * For ETH, there is no session socket so there is nothing more to do.
-     */
-    if (so->lo.pseudowire == L2TP_API_SESSION_PW_TYPE_ETH) {
-        assert(so->sfd < 0);
-    } else if (so->lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP) {
-        assert(so->sfd >= 0);
-        if (so->pppfd < 0) die("Failed to establish ppp\n");
-    }
-
-    fprintf(g_status_file, "%s %u/%u to %u/%u\n", so->lo.ifname[0] ? so->lo.ifname : "?",
+    fprintf(g_status_file, "%s %u/%u to %u/%u\n", so->pw.ifname[0] ? so->pw.ifname : "?",
             so->lo.tid, so->lo.sid, so->lo.ptid, so->lo.psid);
     fflush(g_status_file);
 }
@@ -349,7 +334,7 @@ static void run_tunnels(struct l2tp_options *lo, struct runtime_options *ro)
             so->lo = to->lo;
             so->ro = to->ro;
             so->to = to;
-            so->sfd = -1;
+            ppp_init(&so->pw.typ.ppp);
             so->lo.sid = generate_id(s, 1000*to->lo.tid, so->ro.is_client);
             so->lo.psid = generate_id(s, 1000*to->lo.ptid, !so->ro.is_client);
             do_create_session(so);

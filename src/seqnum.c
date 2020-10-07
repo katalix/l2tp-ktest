@@ -303,7 +303,7 @@ again:
     return 0;
 }
 
-static int create_session(struct l2tp_options *opt, struct l2tp_session_nl_config *scfg, int *ctlsk, int *pppsk)
+static int create_session(struct l2tp_options *opt, struct l2tp_session_nl_config *scfg, struct l2tp_pw *pw)
 {
     int ret;
 
@@ -313,7 +313,7 @@ static int create_session(struct l2tp_options *opt, struct l2tp_session_nl_confi
         return ret;
     }
 
-    ret = kernel_session_create_pppox(opt, ctlsk, pppsk);
+    ret = kernel_session_create_pppox(opt, pw);
     if (ret != 0) {
         err("%s: failed to create pppol2tp context: %s\n", __func__, strerror(ret));
         return ret;
@@ -322,11 +322,11 @@ static int create_session(struct l2tp_options *opt, struct l2tp_session_nl_confi
     return 0;
 }
 
-static void destroy_session(struct l2tp_options *opt, int ctlsk, int pppsk)
+static void destroy_session(struct l2tp_options *opt, struct l2tp_pw *pw)
 {
     l2tp_nl_session_delete(opt->tid, opt->sid);
-    close(pppsk);
-    close(ctlsk);
+    close(pw->typ.ppp.fd.pppox);
+    ppp_close(&pw->typ.ppp);
     /* Ugh: avoid racing with kernel async shutdown process */
     usleep(250*1000);
 }
@@ -429,7 +429,8 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
             .recv_seq = c[i].recv_seq,
             .send_seq = c[i].send_seq,
         };
-        int ret, ctlsk, pppsk;
+        struct l2tp_pw pw = INIT_L2TP_PW;
+        int ret;
 
         log("%s: pkt_seq=%u, session lns_mode=%u, recv_seq=%u, send_seq=%u\n",
                 __func__,
@@ -439,7 +440,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
                 c[i].send_seq);
 
 
-        ret = create_session(options, &cfg, &ctlsk, &pppsk);
+        ret = create_session(options, &cfg, &pw);
         if (ret != 0) {
             err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
             return ret;
@@ -449,7 +450,7 @@ static int do_validate_ingress(int local_tfd, int peer_tfd, struct l2tp_options 
         if (ret != 0)
             return ret;
 
-        destroy_session(options, ctlsk, pppsk);
+        destroy_session(options, &pw);
 
         log("OK\n");
     }
@@ -534,7 +535,8 @@ static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options
             .l2spec_type = L2TP_API_SESSION_L2SPECTYPE_DEFAULT,
             .send_seq = 1,
         };
-        int ret, ctlsk, pppsk;
+        struct l2tp_pw pw = INIT_L2TP_PW;
+        int ret;
 
         {
             int j;
@@ -545,7 +547,7 @@ static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options
             log_raw("\n");
         }
 
-        ret = create_session(options, &cfg, &ctlsk, &pppsk);
+        ret = create_session(options, &cfg, &pw);
         if (ret != 0) {
             err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
             return ret;
@@ -555,7 +557,7 @@ static int do_validate_rxwindow(int local_tfd, int peer_tfd, struct l2tp_options
         if (ret)
             return ret;
 
-        destroy_session(options, ctlsk, pppsk);
+        destroy_session(options, &pw);
 
         log("OK\n");
     }
@@ -612,7 +614,8 @@ static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *o
             .send_seq = 1,
             .reorder_timeout = VALIDATE_QUEUE_TIMEOUT,
         };
-        int ret, ctlsk, pppsk;
+        struct l2tp_pw pw = INIT_L2TP_PW;
+        int ret;
 
         {
             int j;
@@ -623,7 +626,7 @@ static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *o
             log_raw("\n");
         }
 
-        ret = create_session(options, &cfg, &ctlsk, &pppsk);
+        ret = create_session(options, &cfg, &pw);
         if (ret != 0) {
             err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
             return ret;
@@ -633,7 +636,7 @@ static int do_validate_queue(int local_tfd, int peer_tfd, struct l2tp_options *o
         if (ret != 0)
             return ret;
 
-        destroy_session(options, ctlsk, pppsk);
+        destroy_session(options, &pw);
 
         log("OK\n");
     }
@@ -694,7 +697,8 @@ static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options 
             .send_seq = 1,
             .reorder_timeout = 0,
         };
-        int ret, ctlsk, pppsk;
+        struct l2tp_pw pw = INIT_L2TP_PW;
+        int ret;
 
         {
             int j;
@@ -705,7 +709,7 @@ static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options 
             log_raw("\n");
         }
 
-        ret = create_session(options, &cfg, &ctlsk, &pppsk);
+        ret = create_session(options, &cfg, &pw);
         if (ret != 0) {
             err("%s: failed to create session instance: %s\n", __func__, strerror(ret));
             return ret;
@@ -715,7 +719,7 @@ static int do_validate_noqueue(int local_tfd, int peer_tfd, struct l2tp_options 
         if (ret != 0)
             return ret;
 
-        destroy_session(options, ctlsk, pppsk);
+        destroy_session(options, &pw);
 
         log("OK\n");
     }

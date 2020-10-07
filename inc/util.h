@@ -55,10 +55,21 @@ struct l2tp_options {
 };
 
 struct l2tp_pw {
+    char ifname[16];
     union {
         struct ppp ppp;
     } typ;
 };
+
+#define INIT_L2TP_PW { \
+    .ifname[0] = 0, \
+    .typ.ppp = INIT_PPP, \
+}
+
+#define l2tp_pw_init(_pw) do { \
+    struct l2tp_pw _init = INIT_L2TP_PW; \
+    *(_pw) = _init; \
+} while(0)
 
 /*
  * Logging wrapper macros: dbg() generates output if opt_debug
@@ -309,13 +320,10 @@ int kernel_tunnel_create(int tfd, struct l2tp_options *options, int *ctlsk);
  * This helper function creates a kernel context using either the
  * socket API or the netlink API as requested by the supplied options.
  *  @param  options     options governing session creation
- *  @param  ctlsk       variable to receive control socket for pppol2tp/socket API
- *  @param  pppsk       variable to receive ppp socket if ppp session. May be null
- *                      if ppp data socket not required.
+ *  @param  pw          output variable for pseudowire data
  *  @return             0 on success, negative errno otherwise
  */
-int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk);
-int kernel_session_create_2(struct l2tp_options *options, struct l2tp_pw *pw);
+int kernel_session_create(struct l2tp_options *options, struct l2tp_pw *pw);
 
 /**
  * Create kernel session pppox socket(s).
@@ -325,13 +333,10 @@ int kernel_session_create_2(struct l2tp_options *options, struct l2tp_pw *pw);
  * use l2tp_nl_session_create to create the core kernel context, and then use this
  * function to create the pppol2tp context.
  *  @param  options     options governing session creation
- *  @param  ctlsk       variable to receive control socket for pppol2tp/socket API
- *  @param  pppsk       variable to receive ppp socket if ppp session. May be null
- *                      if ppp data socket not required.
+ *  @param  pw          output variable for pseudowire data
  *  @return             0 on success, negative errno otherwise
  */
-int kernel_session_create_pppox(struct l2tp_options *options, int *ctlsk, int *pppsk);
-int kernel_session_create_pppox_2(struct l2tp_options *options, struct l2tp_pw *pw);
+int kernel_session_create_pppox(struct l2tp_options *options, struct l2tp_pw *pw);
 
 /**
  * Generate a bounded random number using random(3).

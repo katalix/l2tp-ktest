@@ -73,10 +73,10 @@ void show_usage(const char *myname)
 
 int main(int argc, char **argv)
 {
-    int ret, opt;
-    int tfd = -1;
+    struct l2tp_pw pw = INIT_L2TP_PW;
     int ppptctl = -1;
-    int pppsctl = -1;
+    int tfd = -1;
+    int ret, opt;
 
     /* Runtime options */
     struct runtime_options rto = {
@@ -244,7 +244,7 @@ int main(int argc, char **argv)
 
         /* Now create a session if we've been asked to */
         if (rto.do_create_session) {
-            ret = kernel_session_create(&lo, &pppsctl, NULL);
+            ret = kernel_session_create(&lo, &pw);
             if (ret) die("kernel_session_create failed: %s\n", strerror(-ret));
         }
     }
@@ -260,7 +260,6 @@ int main(int argc, char **argv)
             l2tp_nl_tunnel_delete(lo.tid);
             break;
         case L2TP_SOCKET_API:
-            close(pppsctl);
             close(ppptctl);
             close(tfd);
             break;
