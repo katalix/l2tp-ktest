@@ -10,7 +10,7 @@ MY_CFLAGS   := $(CFLAGS) -I/usr/include/libnl3 -Wall -Werror -g -ggdb
 DEPFLAGS	:= -MT $@ -MMD -MP -MF $(DEPDIR)/$*.Td
 
 COMMON_SOURCES 	:= $(SRCDIR)/l2tp_netlink.c
-COMMON_SOURCES 	+= $(SRCDIR)/util.c $(SRCDIR)/util_ppp.c
+COMMON_SOURCES 	+= $(SRCDIR)/util.c $(SRCDIR)/util_ppp.c $(SRCDIR)/util_ppp_2.c
 COMMON_LIBS	:= nl-genl-3 nl-3 pthread
 
 OPT_NO_SYZBOT_APPS := 0

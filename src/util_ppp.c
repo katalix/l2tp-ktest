@@ -84,6 +84,7 @@
 /*
  * make_ppp_unit - make a new ppp unit.
  */
+#if 0
 static int make_ppp_unit()
 {
     int ifunit = -1;
@@ -108,11 +109,13 @@ static int make_ppp_unit()
 
     return ifunit;
 }
+#endif
 
 /********************************************************************
  *
  * generic_establish_ppp - Turn the fd into a ppp interface.
  */
+#if 0
 int ppp_generic_establish_ppp(int fd, int *unit)
 {
     int flags, ifunit;
@@ -163,6 +166,7 @@ err_close:
 err:
     return -1;
 }
+#endif
 
 /********************************************************************
  *
