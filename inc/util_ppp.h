@@ -72,12 +72,6 @@ int ppp_connect_channel(struct ppp *ppp);
 int ppp_establish_pppox(int pppox_fd, struct ppp *ppp);
 
 /**
- * Compat shim for existing code.  Leaks a socket FD, so best avoided
- * for new code.
- */
-int ppp_generic_establish_ppp(int fd, int *unit);
-
-/**
  * Close all resources associated with a ppp instance.
  *  @param  ppp             ppp instance
  */
