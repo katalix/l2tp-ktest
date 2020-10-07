@@ -11,6 +11,7 @@
  */
 struct ppp {
     struct {
+        int pppox;      /** convenience storage of the AF_PPPOX socket, not directly set here */
         int ppp;        /** fd of the /dev/ppp instance attached to the channel */
         int unit;       /** fd of the /dev/ppp instance for the unit (netdev) */
     } fd;

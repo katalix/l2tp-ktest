@@ -14,6 +14,7 @@
 #include "usl_list.h"
 
 #include "l2tp_kapi.h"
+#include "util_ppp.h"
 
 typedef enum {
     L2TP_UNDEFINED_API,
@@ -51,6 +52,12 @@ struct l2tp_options {
             uint16_t id;
         } pppac;
     } pw;
+};
+
+struct l2tp_pw {
+    union {
+        struct ppp ppp;
+    } typ;
 };
 
 /*
@@ -308,6 +315,7 @@ int kernel_tunnel_create(int tfd, struct l2tp_options *options, int *ctlsk);
  *  @return             0 on success, negative errno otherwise
  */
 int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk);
+int kernel_session_create_2(struct l2tp_options *options, struct l2tp_pw *pw);
 
 /**
  * Create kernel session pppox socket(s).
@@ -323,6 +331,7 @@ int kernel_session_create(struct l2tp_options *options, int *ctlsk, int *pppsk);
  *  @return             0 on success, negative errno otherwise
  */
 int kernel_session_create_pppox(struct l2tp_options *options, int *ctlsk, int *pppsk);
+int kernel_session_create_pppox_2(struct l2tp_options *options, struct l2tp_pw *pw);
 
 /**
  * Generate a bounded random number using random(3).
