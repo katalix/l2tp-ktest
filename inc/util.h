@@ -58,6 +58,10 @@ struct l2tp_pw {
     char ifname[16];
     union {
         struct ppp ppp;
+        struct {
+            struct ppp pppoe;
+            struct ppp pppol2tp;
+        } pppac;
     } typ;
 };
 
