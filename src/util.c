@@ -297,13 +297,13 @@ static int pppol2tp_ctrl_create(struct sockaddr_storage *addr, socklen_t addrlen
 
     fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OL2TP);
     if (fd < 0) {
-        err("failed to create AF_PPPOX socket: %s\n", strerror(errno));
+        err("failed to create AF_PPPOX/PPPoL2TP socket: %s\n", strerror(errno));
         return fd;
     }
 
     ret = connect(fd, (struct sockaddr*)addr, addrlen);
     if (ret) {
-        err("failed to connect AF_PPPOX socket: %s\n", strerror(errno));
+        err("failed to connect AF_PPPOX/PPPoL2TP socket: %s\n", strerror(errno));
         close(fd);
         return -1;
     }
@@ -311,6 +311,34 @@ static int pppol2tp_ctrl_create(struct sockaddr_storage *addr, socklen_t addrlen
     if (opt_debug) {
         int debug = 0xff;
         setsockopt(fd, SOL_PPPOL2TP, PPPOL2TP_SO_DEBUG, &debug, sizeof(debug));
+    }
+
+    return fd;
+}
+
+static int pppoe_create(uint16_t sid, uint8_t remote[ETH_ALEN], char *dev)
+{
+    struct sockaddr_storage sa = {};
+    struct sockaddr_pppox *sap;
+    int fd;
+
+    sap = (void*)&sa;
+    sap->sa_family = AF_PPPOX;
+    sap->sa_protocol = PX_PROTO_OE;
+    sap->sa_addr.pppoe.sid = ntohs(sid);
+    memcpy(sap->sa_addr.pppoe.remote, remote, ETH_ALEN);
+    snprintf(sap->sa_addr.pppoe.dev, IFNAMSIZ, "%s", dev);
+
+    fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OE);
+    if (fd < 0) {
+        err("failed to create AF_PPPOX/PPPoE socket: %s\n", strerror(errno));
+        return -errno;
+    }
+
+    if (0 != connect(fd, (struct sockaddr*)&sa, sizeof(*sap))) {
+        err("failed to connect AF_PPPOX/PPPoE socket: %s\n", strerror(errno));
+        close(fd);
+        return -errno;
     }
 
     return fd;
@@ -496,7 +524,6 @@ static int kernel_session_create_nl(struct l2tp_options *options, struct l2tp_pw
         .ifname = options->ifname[0] ? &options->ifname[0] : NULL,
         .cookie_len = options->cookie_len,
         .peer_cookie_len = options->peer_cookie_len,
-        .pppoe_session_id = options->pw.pppac.id,
         /* leave everything else as default */
     };
     struct l2tp_session_data sd = {};
@@ -506,7 +533,17 @@ static int kernel_session_create_nl(struct l2tp_options *options, struct l2tp_pw
     memcpy(&scfg.cookie[0], &options->cookie[0], options->cookie_len);
     assert(options->peer_cookie_len <= sizeof(scfg.peer_cookie));
     memcpy(&scfg.peer_cookie[0], &options->peer_cookie[0], options->peer_cookie_len);
-    memcpy(&scfg.pppoe_peer_mac, &options->pw.pppac.peer_mac, 6);
+
+    /* We use pseudowire type PPP_AC as a means to distinguish between
+     * locally-terminated sessions and sessions which are switched into
+     * an l2tp session for remote termination.
+     * From the L2TP subsystem's perspective these are the same thing;
+     * it's just configured differently in the ppp subsytem.
+     * As such, for PPP_AC pseudowires, tell the L2TP subsystem we're
+     * actually doing PPP.
+     */
+    if (scfg.pw_type == L2TP_API_SESSION_PW_TYPE_PPP_AC)
+        scfg.pw_type = L2TP_API_SESSION_PW_TYPE_PPP;
 
     ret = l2tp_nl_session_create(options->tid, options->ptid, options->sid, options->psid, &scfg);
     if (ret) return ret;
@@ -520,12 +557,22 @@ static int kernel_session_create_nl(struct l2tp_options *options, struct l2tp_pw
     return 0;
 }
 
-int kernel_session_create_pppox(struct l2tp_options *opt, struct l2tp_pw *pw)
+static int kernel_session_create_pppol2tp(struct l2tp_options *opt, struct l2tp_pw *pw)
 {
     assert(opt);
+    assert(opt->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP);
     assert(pw);
 
     int ret, pppox;
+
+    dbg("%s: %s, L2TPv%d, tid %d, sid %d, ptid %d, psid %d\n",
+            __func__,
+            opt->family == AF_INET ? "AF_INET" : "AF_INET6",
+            opt->l2tp_version,
+            opt->tid,
+            opt->sid,
+            opt->ptid,
+            opt->psid);
 
     pppox = pppol2tp_session_ctrl_socket(opt->family, opt->l2tp_version, opt->tid,
                                                    opt->ptid, opt->sid, opt->psid);
@@ -540,6 +587,86 @@ int kernel_session_create_pppox(struct l2tp_options *opt, struct l2tp_pw *pw)
     pw->typ.ppp.fd.pppox = pppox;
     snprintf(&pw->ifname[0], sizeof(pw->ifname), "ppp%d", pw->typ.ppp.idx.unit);
     return 0;
+}
+
+static int kernel_session_create_pppoe(struct l2tp_options *opt, struct l2tp_pw *pw)
+{
+    assert(opt);
+    assert(opt->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP_AC);
+    assert(pw);
+
+    struct ppp pppol2tp = INIT_PPP;
+    struct ppp pppoe = INIT_PPP;
+    int pppol2tp_fd = -1;
+    int pppoe_fd = -1;
+    int ret;
+
+    dbg("%s: PPPoE sid %" PRIu16 ", peer MAC "
+            "%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8", dev %s\n",
+            __func__,
+            opt->pw.pppac.id,
+            opt->pw.pppac.peer_mac[0],
+            opt->pw.pppac.peer_mac[1],
+            opt->pw.pppac.peer_mac[2],
+            opt->pw.pppac.peer_mac[3],
+            opt->pw.pppac.peer_mac[4],
+            opt->pw.pppac.peer_mac[5],
+            opt->ifname);
+
+    /* PPPoE */
+    pppoe_fd = pppoe_create(opt->pw.pppac.id, opt->pw.pppac.peer_mac, opt->ifname);
+    if (pppoe_fd < 0) {
+        ret = pppoe_fd;
+        goto err;
+    }
+
+    ret = ppp_associate_channel(pppoe_fd, &pppoe);
+    if (ret) goto err;
+    pppoe.fd.pppox = pppoe_fd;
+
+    /* PPPoL2TP */
+    pppol2tp_fd = pppol2tp_session_ctrl_socket(opt->family, opt->l2tp_version, opt->tid,
+                                               opt->ptid, opt->sid, opt->psid);
+    if (pppol2tp_fd < 0) {
+        ret = pppol2tp_fd;
+        goto err;
+    }
+
+    ret = ppp_associate_channel(pppol2tp_fd, &pppol2tp);
+    if (ret) goto err;
+    pppol2tp.fd.pppox = pppol2tp_fd;
+
+    /* Bridge PPPoE -> PPPoL2TP */
+    ret = ppp_bridge_channels(&pppoe, &pppol2tp);
+    if (ret) goto err;
+
+    pw->typ.pppac.pppoe = pppoe;
+    pw->typ.pppac.pppol2tp = pppol2tp;
+
+    return 0;
+
+err:
+    if (pppoe_fd >= 0) close(pppoe_fd);
+    if (pppol2tp_fd >= 0) close(pppol2tp_fd);
+    return ret;
+}
+
+int kernel_session_create_pppox(struct l2tp_options *opt, struct l2tp_pw *pw)
+{
+    assert(opt);
+    assert(pw);
+
+    dbg("%s: %s\n", __func__, PWTYPE_STR(opt->pseudowire));
+
+    switch (opt->pseudowire) {
+        case L2TP_API_SESSION_PW_TYPE_PPP:
+            return kernel_session_create_pppol2tp(opt, pw);
+        case L2TP_API_SESSION_PW_TYPE_PPP_AC:
+            return kernel_session_create_pppoe(opt, pw);
+        default:
+            assert(!"Unknown pppox pseudowire type");
+    }
+    return -ENOSYS;
 }
 
 int kernel_session_create(struct l2tp_options *options, struct l2tp_pw *pw)
@@ -561,7 +688,8 @@ int kernel_session_create(struct l2tp_options *options, struct l2tp_pw *pw)
                  * call connect on a pppox socket to instantiate the ppp_generic
                  * side of things.
                  */
-                if (options->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP)
+                if (options->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP ||
+                        options->pseudowire == L2TP_API_SESSION_PW_TYPE_PPP_AC)
                     ret = kernel_session_create_pppox(options, pw);
             }
         break;
