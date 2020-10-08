@@ -358,7 +358,7 @@ then
     tc_api_v2_inet6_ppp() { v2_tunl_check inet6 ppp; }
     if test $HAVE_L2TP_AC_PPPOE -eq 1
     then
-        tc_api_v2_inet_pppac() { v2_tunl_check inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
+        tc_api_v2_inet6_pppac() { v2_tunl_check inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
     fi
 fi
 
@@ -368,7 +368,7 @@ tc_api_v3_udp_inet_eth() { v3_tunl_check udp inet eth; }
 tc_api_v3_udp_inet_ppp() { v3_tunl_check udp inet ppp; }
 if test $HAVE_L2TP_AC_PPPOE -eq 1
 then
-    tc_api_v2_inet_pppac() { v3_tunl_check udp inet "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
+    tc_api_v3_inet_pppac() { v3_tunl_check udp inet "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
 fi
 
 # L2TPv3, IP encap, IPv4
@@ -377,7 +377,7 @@ tc_api_v3_ip_inet_eth() { v3_tunl_check ip inet eth; }
 tc_api_v3_ip_inet_ppp() { v3_tunl_check ip inet ppp; }
 if test $HAVE_L2TP_AC_PPPOE -eq 1
 then
-    tc_api_v2_inet_pppac() { v3_tunl_check ip inet "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
+    tc_api_v3_ip_inet_pppac() { v3_tunl_check ip inet "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
 fi
 
 # L2TPv3, UDP encap, IPv6
@@ -388,7 +388,7 @@ then
     tc_api_v3_udp_inet6_ppp() { v3_tunl_check udp inet6 ppp; }
     if test $HAVE_L2TP_AC_PPPOE -eq 1
     then
-        tc_api_v2_inet_pppac() { v3_tunl_check udp inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
+        tc_api_v3_udp_inet6_pppac() { v3_tunl_check udp inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
     fi
 fi
 
@@ -400,7 +400,7 @@ then
     tc_api_v3_ip_inet6_ppp() { v3_tunl_check ip inet6 ppp; }
     if test $HAVE_L2TP_AC_PPPOE -eq 1
     then
-        tc_api_v2_inet_pppac() { v3_tunl_check ip inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
+        tc_api_v3_ip_inet6_pppac() { v3_tunl_check ip inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
     fi
 fi
 
