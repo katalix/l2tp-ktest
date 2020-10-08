@@ -167,6 +167,12 @@ extern bool opt_silent; /* disable err() logging */
     exit(EXIT_FAILURE); \
 } while(0)
 
+#define PWTYPE_STR(_t) \
+    (_t) == L2TP_API_SESSION_PW_TYPE_PPP ? "PPP" \
+    : (_t) == L2TP_API_SESSION_PW_TYPE_PPP_AC ? "PPPAC" \
+    : (_t) == L2TP_API_SESSION_PW_TYPE_ETH ? "ETH" \
+    : "unknown"
+
 /**
  * Obtain port from a sockaddr_storage structure.
  * Structure must be initialised with either an AF_INET or AF_INET6 address.

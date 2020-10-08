@@ -228,7 +228,7 @@ int main(int argc, char **argv)
         lo.delete_api == L2TP_SOCKET_API ? "socket" : "netlink",
         lo.protocol == IPPROTO_UDP ? "UDP" : "IP",
         lo.family == AF_INET ? "inet" : "inet6",
-        rto.do_create_session ? lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP ? "PPP" : "ETH" : "no",
+        rto.do_create_session ? PWTYPE_STR(lo.pseudowire) : "no",
         rto.do_delete ? "delete" : "don't delete");
 
     /* Create a tunnel socket ourself if we're running as managed */

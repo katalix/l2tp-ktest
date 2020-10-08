@@ -534,8 +534,7 @@ int main(int argc, char **argv)
         lo.delete_api == L2TP_SOCKET_API ? "socket" : "netlink",
         lo.protocol == IPPROTO_UDP ? "UDP" : "IP",
         lo.family == AF_INET ? "inet" : "inet6",
-        lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP ? "PPP" :
-            lo.pseudowire == L2TP_API_SESSION_PW_TYPE_PPP_AC ? "PPPAC" : "ETH");
+        PWTYPE_STR(lo.pseudowire));
 
     run_tunnels(&lo, &ro);
     if (g_status_file) fclose(g_status_file);
