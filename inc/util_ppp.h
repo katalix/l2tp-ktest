@@ -72,6 +72,15 @@ int ppp_connect_channel(struct ppp *ppp);
 int ppp_establish_pppox(int pppox_fd, struct ppp *ppp);
 
 /**
+ * Bridge one ppp channel to another using PPPIOCBRIDGECHAN.
+ * struct ppp @fd.ppp must be set in both instances.
+ *  @param  ppp1            ppp channel to bridge
+ *  @param  ppp2            ppp channel to bridge
+ *  @return                 0 on success, negative errno otherwise
+ */
+int ppp_bridge_channels(struct ppp *ppp1, struct ppp *ppp2);
+
+/**
  * Close all resources associated with a ppp instance.
  *  @param  ppp             ppp instance
  */

@@ -118,6 +118,31 @@ int ppp_generic_establish_ppp(int fd, int *unit)
     return ppp.fd.ppp;
 }
 
+#ifndef PPPIOCBRIDGECHAN
+#define PPPIOCBRIDGECHAN _IOW('t', 53, int)
+#endif
+int ppp_bridge_channels(struct ppp *ppp1, struct ppp *ppp2)
+{
+    assert(ppp1);
+    assert(ppp2);
+    assert(ppp1->fd.ppp >= 0);
+    assert(ppp1->idx.channel);
+    assert(ppp2->fd.ppp >= 0);
+    assert(ppp2->idx.channel);
+
+    if (ioctl(ppp1->fd.ppp, PPPIOCBRIDGECHAN, &ppp2->idx.channel) < 0) {
+        err("couldn't bridge ppp channels: %m");
+        return -errno;
+    }
+
+    if (ioctl(ppp2->fd.ppp, PPPIOCBRIDGECHAN, &ppp1->idx.channel) < 0) {
+        err("couldn't bridge ppp channels: %m");
+        return -errno;
+    }
+
+    return 0;
+}
+
 void ppp_close(struct ppp *ppp)
 {
     if (ppp) {
