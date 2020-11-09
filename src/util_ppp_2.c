@@ -131,12 +131,12 @@ int ppp_bridge_channels(struct ppp *ppp1, struct ppp *ppp2)
     assert(ppp2->idx.channel);
 
     if (ioctl(ppp1->fd.ppp, PPPIOCBRIDGECHAN, &ppp2->idx.channel) < 0) {
-        err("couldn't bridge ppp channels: %m");
+        err("couldn't bridge ppp channels: %m\n");
         return -errno;
     }
 
     if (ioctl(ppp2->fd.ppp, PPPIOCBRIDGECHAN, &ppp1->idx.channel) < 0) {
-        err("couldn't bridge ppp channels: %m");
+        err("couldn't bridge ppp channels: %m\n");
         return -errno;
     }
 
