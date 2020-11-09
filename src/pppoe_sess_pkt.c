@@ -173,8 +173,8 @@ static int pppoe_sess_pkt_send(struct app_options *opt, uint8_t *mac, int sfd)
     assert(sfd >= 0);
 
     uint8_t buf[PPPOE_PAYLOAD_LEN];
+    int ret = 0;
     size_t nb;
-    int ret;
 
     for (;;) {
         nb = fread(buf, 1, sizeof(buf), stdin);
@@ -210,11 +210,12 @@ static int pppoe_sess_pkt(struct app_options *opt)
 {
     assert(opt);
     uint8_t my_mac[6];
-    int fd, ret;
+    int fd = -1, ret;
 
     ret = socket_raw(opt->ifname, &fd);
     if (ret)
         return ret;
+    assert(fd >= 0);
 
     ret = get_hwaddr(opt->ifname, my_mac);
     if (ret)
@@ -223,7 +224,7 @@ static int pppoe_sess_pkt(struct app_options *opt)
     ret = opt->send_mode ? pppoe_sess_pkt_send(opt, my_mac, fd) : pppoe_sess_pkt_recv(opt, fd);
 
 out:
-    close(fd);
+    if (fd >= 0) close(fd);
     return ret;
 }
 
