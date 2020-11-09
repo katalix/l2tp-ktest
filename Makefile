@@ -67,6 +67,11 @@ getstats_SRCS := $(SRCDIR)/getstats.c $(COMMON_SOURCES)
 getstats_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,getstats))
 
+# kernel_has_pppiobridgechan
+kernel_has_pppiobridgechan_SRCS := $(SRCDIR)/kernel_has_pppiobridgechan.c $(COMMON_SOURCES)
+kernel_has_pppiobridgechan_LIBS := $(COMMON_LIBS)
+$(eval $(call buildapp,kernel_has_pppiobridgechan))
+
 # syzbot reproducers
 ifeq ($(OPT_NO_SYZBOT_APPS),0)
 include $(SRCDIR)/syzbot/syzbot.mk
