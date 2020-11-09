@@ -135,7 +135,7 @@ have_l2tpip_ipv6() { test $(kernel_version $(current_kernel_version)) -ge $(kern
 have_ipv6_peer() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 11 0); }
 have_ip_netns() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 8 0); }
 have_udp_encap_destroy() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 9 0); }
-have_l2tp_ac_pppoe() { grep -q l2tp_ac_pppoe /lib/modules/$(uname -r)/modules.dep; }
+have_l2tp_ac_pppoe() { ./kernel_has_pppiobridgechan -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c > /dev/null 2>&1; }
 have_consistent_l2tp_stats() { false; }
 
 # Tunnel / session lifetimes
@@ -328,10 +328,6 @@ test $HAVE_IP_NETNS -eq 1 && log "Have net namespaces" || log "Have no net names
 have_udp_encap_destroy && HAVE_UDP_ENCAP_DESTROY=1 || HAVE_UDP_ENCAP_DESTROY=0
 test $HAVE_UDP_ENCAP_DESTROY -eq 1 && log "Have UDP encap_destroy hook" || log "Have no UDP encap_destroy hook"
 
-# Check whether kernel supports the L2TP AC/PPPoE driver
-have_l2tp_ac_pppoe && HAVE_L2TP_AC_PPPOE=1 || HAVE_L2TP_AC_PPPOE=0
-test $HAVE_L2TP_AC_PPPOE -eq 1 && log "Have L2TP AC/PPPoE driver" || log "Have no L2TP AC/PPPoE driver"
-
 # Check whether kernel has consistent L2TP rx/tx dataplane stats
 have_consistent_l2tp_stats && HAVE_CONSISTENT_L2TP_STATS=1 || HAVE_CONSISTENT_L2TP_STATS=0
 test $HAVE_CONSISTENT_L2TP_STATS -eq 1 && log "Have consistent L2TP stats" || log "Have inconsistent L2TP stats, disabling stats checks"
@@ -342,6 +338,10 @@ ETH_IFNAME=$(ip link | \
          /link\/ether/ { print ifname; f=1; exit }
          END { exit f?0:1 }') || die "Can't locate Ethernet interface"
 log "Have Ethernet interface $ETH_IFNAME"
+
+# Check whether kernel supports the L2TP AC/PPPoE driver
+have_l2tp_ac_pppoe && HAVE_L2TP_AC_PPPOE=1 || HAVE_L2TP_AC_PPPOE=0
+test $HAVE_L2TP_AC_PPPOE -eq 1 && log "Have L2TP AC/PPPoE driver" || log "Have no L2TP AC/PPPoE driver"
 
 # L2TPv2, IPv4
 tc_api_v2_inet_nopw() { v2_tunl_check inet; }
