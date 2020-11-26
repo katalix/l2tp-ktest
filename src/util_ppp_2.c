@@ -135,18 +135,20 @@ int ppp_bridge_channels(struct ppp *ppp1, struct ppp *ppp2)
         return -errno;
     }
 
-    if (ioctl(ppp2->fd.ppp, PPPIOCBRIDGECHAN, &ppp1->idx.channel) < 0) {
-        err("couldn't bridge ppp channels: %m\n");
-        return -errno;
-    }
-
     return 0;
 }
 
+#ifndef PPPIOCUNBRIDGECHAN
+#define PPPIOCUNBRIDGECHAN _IO('t', 54)
+#endif
 void ppp_close(struct ppp *ppp)
 {
     if (ppp) {
-        if (ppp->fd.ppp >= 0) close(ppp->fd.ppp);
+        if (ppp->fd.ppp >= 0) {
+            /* FIXME: would be nice to do this conditionally */
+            (void)ioctl(ppp->fd.ppp, PPPIOCUNBRIDGECHAN);
+            close(ppp->fd.ppp);
+        }
         if (ppp->fd.unit >= 0) close(ppp->fd.unit);
         memset(ppp, -1, sizeof(*ppp));
     }
