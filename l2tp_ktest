@@ -404,6 +404,13 @@ then
     fi
 fi
 
+if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
+then
+    tc_api_ppp_channel_bridge() {
+        check $(dirname $0)/ppp_bridge_api -N $ETH_IFNAME -i 5102 -M 04:7d:7b:da:23:9c
+    }
+fi
+
 # $1 -- mode - delete or query
 # $2 -- family
 # $3 -- encap
