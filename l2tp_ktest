@@ -632,7 +632,6 @@ fi
 # startup so it can use a simple diff approach to detect module reference
 # count changes.
 l2tp_modules="l2tp_core l2tp_ip l2tp_ip6 l2tp_eth l2tp_ppp l2tp_netlink"
-test $HAVE_PPP_CHANNEL_BRIDGE -eq 1 && l2tp_modules="$l2tp_modules l2tp_ac_pppoe"
 for m in $l2tp_modules
 do
     modprobe $m
