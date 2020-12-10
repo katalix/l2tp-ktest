@@ -72,6 +72,11 @@ kernel_has_pppiobridgechan_SRCS := $(SRCDIR)/kernel_has_pppiobridgechan.c $(COMM
 kernel_has_pppiobridgechan_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,kernel_has_pppiobridgechan))
 
+# ppp_bridge_api
+ppp_bridge_api_SRCS := $(SRCDIR)/ppp_bridge_api.c $(COMMON_SOURCES)
+ppp_bridge_api_LIBS := $(COMMON_LIBS)
+$(eval $(call buildapp,ppp_bridge_api))
+
 # syzbot reproducers
 ifeq ($(OPT_NO_SYZBOT_APPS),0)
 include $(SRCDIR)/syzbot/syzbot.mk

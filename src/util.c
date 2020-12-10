@@ -316,7 +316,7 @@ static int pppol2tp_ctrl_create(struct sockaddr_storage *addr, socklen_t addrlen
     return fd;
 }
 
-static int pppoe_create(uint16_t sid, uint8_t remote[ETH_ALEN], char *dev)
+int pppoe_create(uint16_t sid, uint8_t remote[ETH_ALEN], char *dev)
 {
     struct sockaddr_storage sa = {};
     struct sockaddr_pppox *sap;

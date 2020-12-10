@@ -11,8 +11,9 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
-#include "usl_list.h"
+#include <linux/if_ether.h>
 
+#include "usl_list.h"
 #include "l2tp_kapi.h"
 #include "util_ppp.h"
 
@@ -270,6 +271,15 @@ void pppol2tp_session_ctrl_addr_init(int family,
         uint32_t psid,
         struct sockaddr_storage *ss,
         socklen_t *sslen);
+
+/**
+ * Create and connect a PPPoE socket.
+ *  @param  sid         PPPoE session ID
+ *  @param  remote      peer MAC address
+ *  @param  dev         PPPoE interface name
+ *  @return             socket fd on success, negative errno otherwise
+ */
+int pppoe_create(uint16_t sid, uint8_t remote[ETH_ALEN], char *dev);
 
 /**
  * Create a tunnel control socket using the pppol2tp API.
