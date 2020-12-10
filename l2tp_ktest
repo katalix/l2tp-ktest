@@ -332,21 +332,21 @@ test $HAVE_UDP_ENCAP_DESTROY -eq 1 && log "Have UDP encap_destroy hook" || log "
 have_consistent_l2tp_stats && HAVE_CONSISTENT_L2TP_STATS=1 || HAVE_CONSISTENT_L2TP_STATS=0
 test $HAVE_CONSISTENT_L2TP_STATS -eq 1 && log "Have consistent L2TP stats" || log "Have inconsistent L2TP stats, disabling stats checks"
 
-# AC/PPPoE tests require the name of a local Ethernet interface
+# PPP channel bridge tests require the name of a local Ethernet interface
 ETH_IFNAME=$(ip link | \
     awk '/^[0-9]+:/ { gsub(/:/, "", $2); ifname=$2 }
          /link\/ether/ { print ifname; f=1; exit }
          END { exit f?0:1 }') || die "Can't locate Ethernet interface"
 log "Have Ethernet interface $ETH_IFNAME"
 
-# Check whether kernel supports the L2TP AC/PPPoE driver
-have_l2tp_ac_pppoe && HAVE_L2TP_AC_PPPOE=1 || HAVE_L2TP_AC_PPPOE=0
-test $HAVE_L2TP_AC_PPPOE -eq 1 && log "Have L2TP AC/PPPoE driver" || log "Have no L2TP AC/PPPoE driver"
+# Check whether kernel supports the PPP channel bridge ioctls
+have_l2tp_ac_pppoe && HAVE_PPP_CHANNEL_BRIDGE=1 || HAVE_PPP_CHANNEL_BRIDGE=0
+test $HAVE_PPP_CHANNEL_BRIDGE -eq 1 && log "Have PPP channel bridge ioctls" || log "Have no PPP channel bridge ioctls"
 
 # L2TPv2, IPv4
 tc_api_v2_inet_nopw() { v2_tunl_check inet; }
 tc_api_v2_inet_ppp() { v2_tunl_check inet ppp; }
-if test $HAVE_L2TP_AC_PPPOE -eq 1
+if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
 then
     tc_api_v2_inet_pppac() { v2_tunl_check inet "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
 fi
@@ -356,7 +356,7 @@ if test $HAVE_IPV6 -eq 1
 then
     tc_api_v2_inet6_nopw() { v2_tunl_check inet6; }
     tc_api_v2_inet6_ppp() { v2_tunl_check inet6 ppp; }
-    if test $HAVE_L2TP_AC_PPPOE -eq 1
+    if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
     then
         tc_api_v2_inet6_pppac() { v2_tunl_check inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
     fi
@@ -366,7 +366,7 @@ fi
 tc_api_v3_udp_inet_nopw() { v3_tunl_check udp inet; }
 tc_api_v3_udp_inet_eth() { v3_tunl_check udp inet eth; }
 tc_api_v3_udp_inet_ppp() { v3_tunl_check udp inet ppp; }
-if test $HAVE_L2TP_AC_PPPOE -eq 1
+if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
 then
     tc_api_v3_inet_pppac() { v3_tunl_check udp inet "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
 fi
@@ -375,7 +375,7 @@ fi
 tc_api_v3_ip_inet_nopw() { v3_tunl_check ip inet; }
 tc_api_v3_ip_inet_eth() { v3_tunl_check ip inet eth; }
 tc_api_v3_ip_inet_ppp() { v3_tunl_check ip inet ppp; }
-if test $HAVE_L2TP_AC_PPPOE -eq 1
+if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
 then
     tc_api_v3_ip_inet_pppac() { v3_tunl_check ip inet "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
 fi
@@ -386,7 +386,7 @@ then
     tc_api_v3_udp_inet6_nopw() { v3_tunl_check udp inet6; }
     tc_api_v3_udp_inet6_eth() { v3_tunl_check udp inet6 eth; }
     tc_api_v3_udp_inet6_ppp() { v3_tunl_check udp inet6 ppp; }
-    if test $HAVE_L2TP_AC_PPPOE -eq 1
+    if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
     then
         tc_api_v3_udp_inet6_pppac() { v3_tunl_check udp inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
     fi
@@ -398,7 +398,7 @@ then
     tc_api_v3_ip_inet6_nopw() { v3_tunl_check ip inet6; }
     tc_api_v3_ip_inet6_eth() { v3_tunl_check ip inet6 eth; }
     tc_api_v3_ip_inet6_ppp() { v3_tunl_check ip inet6 ppp; }
-    if test $HAVE_L2TP_AC_PPPOE -eq 1
+    if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
     then
         tc_api_v3_ip_inet6_pppac() { v3_tunl_check ip inet6 "pppac -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c"; }
     fi
@@ -486,7 +486,7 @@ then
     tc_data_shutdown_v3_inet_udp_eth() { data_shutdown_check 3 inet udp eth; }
     tc_data_shutdown_v3_inet_ip_eth() { data_shutdown_check 3 inet ip eth; }
 
-    if test $HAVE_L2TP_AC_PPPOE -eq 1
+    if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
     then
         tc_ac_pppoe_v2_inet_udp() { ac_pppoe_data_check 2 inet udp; }
         tc_ac_pppoe_v3_inet_udp() { ac_pppoe_data_check 3 inet udp; }
@@ -515,7 +515,7 @@ then
         tc_data_shutdown_v3_inet6_udp_ppp() { data_shutdown_check 3 inet6 udp ppp; }
         tc_data_shutdown_v3_inet6_udp_eth() { data_shutdown_check 3 inet6 udp eth; }
 
-        if test $HAVE_L2TP_AC_PPPOE -eq 1
+        if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
         then
             tc_ac_pppoe_v2_inet6_udp() { ac_pppoe_data_check 2 inet6 udp; }
             tc_ac_pppoe_v3_inet6_udp() { ac_pppoe_data_check 3 inet6 udp; }
@@ -538,7 +538,7 @@ then
             tc_data_shutdown_v3_inet6_ip_ppp() { data_shutdown_check 3 inet6 ip ppp; }
             tc_data_shutdown_v3_inet6_ip_eth() { data_shutdown_check 3 inet6 ip eth; }
 
-            if test $HAVE_L2TP_AC_PPPOE -eq 1
+            if test $HAVE_PPP_CHANNEL_BRIDGE -eq 1
             then
                 tc_ac_pppoe_v3_inet6_ip() { ac_pppoe_data_check 3 inet6 ip; }
             fi
@@ -625,7 +625,7 @@ fi
 # startup so it can use a simple diff approach to detect module reference
 # count changes.
 l2tp_modules="l2tp_core l2tp_ip l2tp_ip6 l2tp_eth l2tp_ppp l2tp_netlink"
-test $HAVE_L2TP_AC_PPPOE -eq 1 && l2tp_modules="$l2tp_modules l2tp_ac_pppoe"
+test $HAVE_PPP_CHANNEL_BRIDGE -eq 1 && l2tp_modules="$l2tp_modules l2tp_ac_pppoe"
 for m in $l2tp_modules
 do
     modprobe $m
