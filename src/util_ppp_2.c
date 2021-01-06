@@ -139,7 +139,7 @@ int ppp_bridge_channels(struct ppp *ppp1, struct ppp *ppp2)
 }
 
 #ifndef PPPIOCUNBRIDGECHAN
-#define PPPIOCUNBRIDGECHAN _IO('t', 54)
+#define PPPIOCUNBRIDGECHAN _IO('t', 52)
 #endif
 void ppp_close(struct ppp *ppp)
 {
