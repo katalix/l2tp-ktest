@@ -22,11 +22,6 @@
 #include "l2tp_netlink.h"
 #include "util.h"
 
-/* Temporary define to be removed when mnl port is complete */
-#ifndef MNL_PORT
-#define MNL_PORT 1
-#endif
-
 /* Timeout for netlink operations.
  * It's possible in some circumstances for a netlink request to receive
  * no response from the kernel.  Rather than having callers hang forever
@@ -36,67 +31,10 @@
 #define GENL_TIMEOUT_DFLT 2000
 
 static pthread_mutex_t l2tp_nl_lock = PTHREAD_MUTEX_INITIALIZER;
-#ifdef MNL_PORT
-static struct nl_sock *l2tp_nl_sock;
-static int l2tp_nl_family = -1;
-#endif
 static struct mnl_socket *l2tp_nl_sock2;
 static uint16_t l2tp_nl_family2 = 0;
 static int l2tp_nl_seq;
 static unsigned int l2tp_nl_portid;
-
-#ifdef MNL_PORT
-static int nlerr_to_errno(int e)
-{
-    e = abs(e);
-    switch (e) {
-        case NLE_BAD_SOCK:      return EBADF;
-        case NLE_EXIST:         return EEXIST;
-        case NLE_NOADDR:        return EADDRNOTAVAIL;
-        case NLE_OBJ_NOTFOUND:  return ENOENT;
-        case NLE_INTR:          return EINTR;
-        case NLE_AGAIN:         return EAGAIN;
-        case NLE_NOACCESS:      return EACCES;
-        case NLE_NOMEM:         return ENOMEM;
-        case NLE_AF_NOSUPPORT:  return EAFNOSUPPORT;
-        case NLE_PROTO_MISMATCH: return EPROTONOSUPPORT;
-        case NLE_OPNOTSUPP:     return EOPNOTSUPP;
-        case NLE_PERM:          return EPERM;
-        case NLE_BUSY:          return EBUSY;
-        case NLE_RANGE:         return ERANGE;
-        case NLE_NODEV:         return ENODEV;
-        case NLE_INVAL: /* fall through */
-        default:                return EINVAL;
-    }
-    return EINVAL;
-}
-
-#define my_nl_exit_log(_ret) do { \
-    if (_ret) { \
-        err("%s: ret %d %s\n", __func__, ret, nl_geterror(_ret)); \
-        _ret = -nlerr_to_errno(_ret); \
-    } else dbg("%s: ret 0\n", __func__); \
-} while(0)
-#endif
-
-#ifdef MNL_PORT
-static int do_nl_send(struct nl_sock *sk, struct nl_msg *msg)
-{
-    int ret;
-
-    if (!sk || !msg) return -EINVAL;
-
-    pthread_mutex_lock(&l2tp_nl_lock);
-    ret = nl_send_auto_complete(sk, msg);
-    if (ret > 0) {
-        ret = nl_wait_for_ack(sk);
-        if (ret > 0) ret = 0; // success
-    }
-    pthread_mutex_unlock(&l2tp_nl_lock);
-
-    return ret;
-}
-#endif
 
 __attribute__((unused))
 static int do_nl_send2(struct mnl_socket *sk, struct nlmsghdr *nlh)
@@ -123,44 +61,6 @@ static int do_nl_send2(struct mnl_socket *sk, struct nlmsghdr *nlh)
     if (ret > 0) ret = 0;
     return ret;
 }
-
-#ifdef MNL_PORT
-static int do_nl_send_recv(struct nl_sock *sk, struct nl_msg *msg, struct nl_cb *cb)
-{
-    int ret;
-
-    if (!sk || !msg || !cb) return -EINVAL;
-
-    pthread_mutex_lock(&l2tp_nl_lock);
-    ret = nl_send_auto_complete(sk, msg);
-    if (ret > 0) {
-        /* Wait for a response for a bounded time.  If no response arrives
-         * in that time, return early.
-         * This approach doesn't account for the possibiliy of the usleep()
-         * call being interrupted.
-         */
-        int nsleep = 0, tsleep = 100;
-again:
-        ret = nl_recvmsgs(sk, cb);
-        if (ret == -NLE_AGAIN) {
-            if (nsleep*tsleep > GENL_TIMEOUT_DFLT) {
-                ret = -ETIMEDOUT;
-            } else {
-                usleep(tsleep);
-                nsleep++;
-                goto again;
-            }
-        }
-    }
-    if (ret >= 0) {
-        ret = nl_wait_for_ack(sk);
-        if (ret > 0) ret = 0; // success
-    }
-    pthread_mutex_unlock(&l2tp_nl_lock);
-
-    return ret;
-}
-#endif
 
 __attribute__((unused))
 static int do_nl_send_recv2(struct mnl_socket *sk, struct nlmsghdr *nlh, mnl_cb_t cb, void *cb_data)
@@ -830,36 +730,6 @@ int l2tp_nl_init(void)
     int ret = 0;
     uint16_t id = 0;
 
-#ifdef MNL_PORT
-    if (l2tp_nl_sock) return -EALREADY;
-
-    l2tp_nl_sock = nl_socket_alloc();
-    if (!l2tp_nl_sock) {
-        err("nl_socket_alloc() failed\n");
-        ret = -ENOSYS;
-        goto out;
-    }
-
-    ret = genl_connect(l2tp_nl_sock);
-    if (ret) {
-        err("genl_connect() failed: %s\n", nl_geterror(ret));
-        goto out;
-    }
-
-    l2tp_nl_family = genl_ctrl_resolve(l2tp_nl_sock, L2TP_GENL_NAME);
-    if (l2tp_nl_family < 0) {
-        err("genl_ctrl_resolve() failed");
-        ret = -EPROTONOSUPPORT;
-        goto out;
-    }
-
-    ret = nl_socket_set_nonblocking(l2tp_nl_sock);
-    if (ret) {
-        err("nl_socket_set_nonblocking() failed: %s\n", nl_geterror(ret));
-        goto out;
-    }
-#endif
-
     if (l2tp_nl_sock2) return -EALREADY;
 
     l2tp_nl_sock2 = mnl_socket_open(NETLINK_GENERIC);
@@ -887,23 +757,12 @@ int l2tp_nl_init(void)
     l2tp_nl_seq = 2;
     l2tp_nl_family2 = id;
 
-#ifdef MNL_PORT
-out:
-#endif
     if (ret) l2tp_nl_cleanup();
     return ret;
 }
 
 void l2tp_nl_cleanup(void)
 {
-#ifdef MNL_PORT
-    if (l2tp_nl_sock) {
-        nl_close(l2tp_nl_sock);
-        nl_socket_free(l2tp_nl_sock);
-        l2tp_nl_sock = NULL;
-    }
-    if (l2tp_nl_family > 0) l2tp_nl_family = -1;
-#endif
     if (l2tp_nl_sock2) {
         mnl_socket_close(l2tp_nl_sock2);
         l2tp_nl_sock2 = NULL;
