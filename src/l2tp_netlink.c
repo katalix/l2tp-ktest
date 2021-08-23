@@ -460,15 +460,25 @@ int l2tp_nl_tunnel_get(uint32_t tunnel_id, struct l2tp_tunnel_stats *stats)
 int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t session_id,
         uint32_t peer_session_id, struct l2tp_session_nl_config *cfg)
 {
-    struct nl_msg *msg;
+    struct nlmsghdr *nlh;
+    struct genlmsghdr *gnlh;
+    char buf[1024] = {};
     int ret;
+
+    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
 
     if (!cfg) return -EINVAL;
 
-    if (l2tp_nl_family <= 0) return -EPROTONOSUPPORT;
+    nlh = mnl_nlmsg_put_header(buf);
+    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    nlh->nlmsg_seq = l2tp_nl_seq++;
+    nlh->nlmsg_pid = l2tp_nl_portid;
 
-    msg = nlmsg_alloc();
-    if (!msg) return -ENOMEM;
+    gnlh = mnl_nlmsg_put_extra_header(nlh, sizeof(*gnlh));
+    gnlh->cmd = L2TP_CMD_SESSION_CREATE;
+    gnlh->version = L2TP_GENL_VERSION;
+    gnlh->reserved = 0;
 
     dbg("%s: tid %" PRIu32 ", ptid %" PRIu32 ", sid %" PRIu32 ", psid %" PRIu32 "\n",
             __func__,
@@ -477,62 +487,58 @@ int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t
             session_id,
             peer_session_id);
 
-    genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, l2tp_nl_family, 0, NLM_F_REQUEST,
-            L2TP_CMD_SESSION_CREATE, L2TP_GENL_VERSION);
-
-    nla_put_u32(msg, L2TP_ATTR_CONN_ID, tunnel_id);
-    nla_put_u32(msg, L2TP_ATTR_PEER_CONN_ID, peer_tunnel_id);
-    nla_put_u32(msg, L2TP_ATTR_SESSION_ID, session_id);
-    nla_put_u32(msg, L2TP_ATTR_PEER_SESSION_ID, peer_session_id);
-    nla_put_u32(msg, L2TP_ATTR_DEBUG, cfg->debug);
-    nla_put_u16(msg, L2TP_ATTR_PW_TYPE, cfg->pw_type);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_PEER_CONN_ID, peer_tunnel_id);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_SESSION_ID, session_id);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_PEER_SESSION_ID, peer_session_id);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_DEBUG, cfg->debug);
+    mnl_attr_put_u16(nlh, L2TP_ATTR_PW_TYPE, cfg->pw_type);
     if (cfg->pw_type == L2TP_API_SESSION_PW_TYPE_ETH_VLAN) {
-        nla_put_u16(msg, L2TP_ATTR_VLAN_ID, cfg->vlan_id);
+        mnl_attr_put_u16(nlh, L2TP_ATTR_VLAN_ID, cfg->vlan_id);
     }
-    nla_put_u16(msg, L2TP_ATTR_MTU, cfg->mtu);
+    mnl_attr_put_u16(nlh, L2TP_ATTR_MTU, cfg->mtu);
     if (cfg->recv_seq) {
-        nla_put_u8(msg, L2TP_ATTR_RECV_SEQ, cfg->recv_seq);
+        mnl_attr_put_u8(nlh, L2TP_ATTR_RECV_SEQ, cfg->recv_seq);
     }
     if (cfg->send_seq) {
-        nla_put_u8(msg, L2TP_ATTR_SEND_SEQ, cfg->send_seq);
+        mnl_attr_put_u8(nlh, L2TP_ATTR_SEND_SEQ, cfg->send_seq);
     }
     if (cfg->lns_mode) {
-        nla_put_u8(msg, L2TP_ATTR_LNS_MODE, cfg->lns_mode);
+        mnl_attr_put_u8(nlh, L2TP_ATTR_LNS_MODE, cfg->lns_mode);
     }
     if (cfg->seqmode) {
-        nla_put_u8(msg, L2TP_ATTR_DATA_SEQ, cfg->seqmode);
+        mnl_attr_put_u8(nlh, L2TP_ATTR_DATA_SEQ, cfg->seqmode);
     }
     if (cfg->reorder_timeout) {
-        nla_put_msecs(msg, L2TP_ATTR_RECV_TIMEOUT, cfg->reorder_timeout);
+        mnl_attr_put_u64(nlh, L2TP_ATTR_RECV_TIMEOUT, cfg->reorder_timeout);
     }
     if (cfg->cookie_len) {
-        nla_put(msg, L2TP_ATTR_COOKIE, cfg->cookie_len, &cfg->cookie);
+        mnl_attr_put(nlh, L2TP_ATTR_COOKIE, cfg->cookie_len, &cfg->cookie);
     }
     if (cfg->peer_cookie_len) {
-        nla_put(msg, L2TP_ATTR_PEER_COOKIE, cfg->peer_cookie_len, &cfg->peer_cookie);
+        mnl_attr_put(nlh, L2TP_ATTR_PEER_COOKIE, cfg->peer_cookie_len, &cfg->peer_cookie);
     }
     if (cfg->vlan_id) {
-        nla_put_u16(msg, L2TP_ATTR_VLAN_ID, cfg->vlan_id);
+        mnl_attr_put_u16(nlh, L2TP_ATTR_VLAN_ID, cfg->vlan_id);
     }
     if (cfg->ifname && cfg->ifname[0]) {
-        nla_put_string(msg, L2TP_ATTR_IFNAME, cfg->ifname);
+        mnl_attr_put_strz(nlh, L2TP_ATTR_IFNAME, cfg->ifname);
     }
-    nla_put_u8(msg, L2TP_ATTR_L2SPEC_TYPE, cfg->l2spec_type);
+    mnl_attr_put_u8(nlh, L2TP_ATTR_L2SPEC_TYPE, cfg->l2spec_type);
     if (cfg->l2spec_type == L2TP_API_SESSION_L2SPECTYPE_NONE) {
-        nla_put_u8(msg, L2TP_ATTR_L2SPEC_LEN, 0);
+        mnl_attr_put_u8(nlh, L2TP_ATTR_L2SPEC_LEN, 0);
     } else if (cfg->l2spec_type == L2TP_API_SESSION_L2SPECTYPE_DEFAULT) {
-        nla_put_u8(msg, L2TP_ATTR_L2SPEC_LEN, 4);
+        mnl_attr_put_u8(nlh, L2TP_ATTR_L2SPEC_LEN, 4);
     }
     if (cfg->pppoe_session_id) {
-        nla_put_u16(msg, L2TP_ATTR_PPPOE_SESSION_ID, cfg->pppoe_session_id);
-        nla_put(msg, L2TP_ATTR_PPPOE_PEER_MAC_ADDR, 6, cfg->pppoe_peer_mac);
+        mnl_attr_put_u16(nlh, L2TP_ATTR_PPPOE_SESSION_ID, cfg->pppoe_session_id);
+        mnl_attr_put(nlh, L2TP_ATTR_PPPOE_PEER_MAC_ADDR, 6, cfg->pppoe_peer_mac);
     }
     /* FIXME - configure l2spec_type tx/rx values separately here
      * when support is available in the kernel.
      */
 
-    ret = do_nl_send(l2tp_nl_sock, msg);
-    nlmsg_free(msg);
+    ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
     my_nl_exit_log(ret);
 
