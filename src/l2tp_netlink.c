@@ -29,13 +29,12 @@
 #define GENL_TIMEOUT_DFLT 2000
 
 static pthread_mutex_t l2tp_nl_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct mnl_socket *l2tp_nl_sock2;
-static uint16_t l2tp_nl_family2 = 0;
+static struct mnl_socket *l2tp_nl_sock;
+static uint16_t l2tp_nl_family = 0;
 static int l2tp_nl_seq;
 static unsigned int l2tp_nl_portid;
 
-__attribute__((unused))
-static int do_nl_send2(struct mnl_socket *sk, struct nlmsghdr *nlh)
+static int do_nl_send(struct mnl_socket *sk, struct nlmsghdr *nlh)
 {
     int ret;
     char buf[1024];
@@ -60,8 +59,7 @@ static int do_nl_send2(struct mnl_socket *sk, struct nlmsghdr *nlh)
     return ret;
 }
 
-__attribute__((unused))
-static int do_nl_send_recv2(struct mnl_socket *sk, struct nlmsghdr *nlh, mnl_cb_t cb, void *cb_data)
+static int do_nl_send_recv(struct mnl_socket *sk, struct nlmsghdr *nlh, mnl_cb_t cb, void *cb_data)
 {
     char buf[1024] = {};
     int ret;
@@ -114,12 +112,12 @@ int l2tp_nl_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, int fd, s
 
     if (!cfg) return -EINVAL;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     dbg("%s: tid %" PRIu32 ", ptid %" PRIu32 "\n", __func__, tunnel_id, peer_tunnel_id);
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -163,7 +161,7 @@ int l2tp_nl_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, int fd, s
     mnl_attr_put_u8(nlh, L2TP_ATTR_PROTO_VERSION, cfg->proto_version);
     mnl_attr_put_u16(nlh, L2TP_ATTR_ENCAP_TYPE, cfg->encap_type);
     mnl_attr_put_u32(nlh, L2TP_ATTR_DEBUG, cfg->debug);
-    ret = do_nl_send2(l2tp_nl_sock2, nlh);
+    ret = do_nl_send(l2tp_nl_sock, nlh);
 
     dbg("%s: ret %d\n", __func__, ret);
 
@@ -177,12 +175,12 @@ int l2tp_nl_tunnel_delete(uint32_t tunnel_id)
     char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     dbg("%s: tid %" PRIu32 "\n", __func__, tunnel_id);
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -194,7 +192,7 @@ int l2tp_nl_tunnel_delete(uint32_t tunnel_id)
 
     mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
 
-    ret = do_nl_send2(l2tp_nl_sock2, nlh);
+    ret = do_nl_send(l2tp_nl_sock, nlh);
 
     dbg("%s: ret %d\n", __func__, ret);
 
@@ -208,12 +206,12 @@ int l2tp_nl_tunnel_modify(uint32_t tunnel_id, uint32_t debug)
     char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     dbg("%s: tid %" PRIu32 "\n", __func__, tunnel_id);
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -226,7 +224,7 @@ int l2tp_nl_tunnel_modify(uint32_t tunnel_id, uint32_t debug)
     mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
     mnl_attr_put_u32(nlh, L2TP_ATTR_DEBUG, debug);
 
-    ret = do_nl_send2(l2tp_nl_sock2, nlh);
+    ret = do_nl_send(l2tp_nl_sock, nlh);
 
     dbg("%s: ret %d\n", __func__, ret);
 
@@ -317,14 +315,14 @@ int l2tp_nl_tunnel_get(uint32_t tunnel_id, struct l2tp_tunnel_stats *stats)
     char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     if (!stats) return -EINVAL;
 
     dbg("%s: tid %" PRIu32 "\n", __func__, tunnel_id);
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -336,7 +334,7 @@ int l2tp_nl_tunnel_get(uint32_t tunnel_id, struct l2tp_tunnel_stats *stats)
 
     mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
 
-    ret = do_nl_send_recv2(l2tp_nl_sock2, nlh, nl_tunl_get_cb, stats);
+    ret = do_nl_send_recv(l2tp_nl_sock, nlh, nl_tunl_get_cb, stats);
 
     dbg("%s: ret %d\n", __func__, ret);
 
@@ -355,12 +353,12 @@ int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t
     char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     if (!cfg) return -EINVAL;
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -428,7 +426,7 @@ int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t
      * when support is available in the kernel.
      */
 
-    ret = do_nl_send2(l2tp_nl_sock2, nlh);
+    ret = do_nl_send(l2tp_nl_sock, nlh);
 
     dbg("%s: ret %d\n", __func__, ret);
 
@@ -442,12 +440,12 @@ int l2tp_nl_session_delete(uint32_t tunnel_id, uint32_t session_id)
     char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     dbg("%s: tid %" PRIu32 ", sid %" PRIu32 "\n", __func__, tunnel_id, session_id);
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -460,7 +458,7 @@ int l2tp_nl_session_delete(uint32_t tunnel_id, uint32_t session_id)
     mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
     mnl_attr_put_u32(nlh, L2TP_ATTR_SESSION_ID, session_id);
 
-    ret = do_nl_send2(l2tp_nl_sock2, nlh);
+    ret = do_nl_send(l2tp_nl_sock, nlh);
 
     dbg("%s: ret %d\n", __func__, ret);
 
@@ -474,12 +472,12 @@ int l2tp_nl_session_modify(uint32_t tunnel_id, uint32_t session_id, uint32_t deb
     char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     dbg("%s: tid %" PRIu32 ", sid %" PRIu32 "\n", __func__, tunnel_id, session_id);
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -493,7 +491,7 @@ int l2tp_nl_session_modify(uint32_t tunnel_id, uint32_t session_id, uint32_t deb
     mnl_attr_put_u32(nlh, L2TP_ATTR_SESSION_ID, session_id);
     mnl_attr_put_u32(nlh, L2TP_ATTR_DEBUG, debug);
 
-    ret = do_nl_send2(l2tp_nl_sock2, nlh);
+    ret = do_nl_send(l2tp_nl_sock, nlh);
 
     dbg("%s: ret %d\n", __func__, ret);
 
@@ -597,14 +595,14 @@ int l2tp_nl_session_get(uint32_t tunnel_id, uint32_t session_id, struct l2tp_ses
     char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
+    if (l2tp_nl_family == 0) return -EPROTONOSUPPORT;
 
     if (!data) return -EINVAL;
 
     dbg("%s: tid %" PRIu32 ", sid %" PRIu32 "\n", __func__, tunnel_id, session_id);
 
     nlh = mnl_nlmsg_put_header(buf);
-    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_type = l2tp_nl_family;
     nlh->nlmsg_flags = NLM_F_REQUEST;
     nlh->nlmsg_seq = l2tp_nl_seq++;
     nlh->nlmsg_pid = l2tp_nl_portid;
@@ -617,7 +615,7 @@ int l2tp_nl_session_get(uint32_t tunnel_id, uint32_t session_id, struct l2tp_ses
     mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
     mnl_attr_put_u32(nlh, L2TP_ATTR_SESSION_ID, session_id);
 
-    ret = do_nl_send_recv2(l2tp_nl_sock2, nlh, nl_sess_get_cb, data);
+    ret = do_nl_send_recv(l2tp_nl_sock, nlh, nl_sess_get_cb, data);
     if (ret == 0) {
         dbg("%s: ifname %s\n", __func__, data->ifname ? data->ifname : "unset");
         dbg("%s: stats: tx: %" PRIu64 "/%" PRIu64 "/%" PRIu64" pkt/bytes/err\n",
@@ -728,32 +726,32 @@ int l2tp_nl_init(void)
     int ret = 0;
     uint16_t id = 0;
 
-    if (l2tp_nl_sock2) return -EALREADY;
+    if (l2tp_nl_sock) return -EALREADY;
 
-    l2tp_nl_sock2 = mnl_socket_open(NETLINK_GENERIC);
-    if (!l2tp_nl_sock2)
+    l2tp_nl_sock = mnl_socket_open(NETLINK_GENERIC);
+    if (!l2tp_nl_sock)
         return -errno;
 
-    ret = mnl_socket_bind(l2tp_nl_sock2, 0, MNL_SOCKET_AUTOPID);
+    ret = mnl_socket_bind(l2tp_nl_sock, 0, MNL_SOCKET_AUTOPID);
     if (ret) {
-        mnl_socket_close(l2tp_nl_sock2);
+        mnl_socket_close(l2tp_nl_sock);
         return -errno;
     }
 
     l2tp_nl_portid = mnl_socket_get_portid(l2tp_nl_sock2);
 
     /* Send command to get the socket's id */
-    ret = genl_get_skt_id(l2tp_nl_sock2, L2TP_GENL_VERSION, L2TP_GENL_NAME, &id);
+    ret = genl_get_skt_id(l2tp_nl_sock, L2TP_GENL_VERSION, L2TP_GENL_NAME, &id);
     if (ret || !id) {
-        mnl_socket_close(l2tp_nl_sock2);
+        mnl_socket_close(l2tp_nl_sock);
         return -EPROTONOSUPPORT;
     }
 
-    l2tp_nl_portid = mnl_socket_get_portid(l2tp_nl_sock2);
+    l2tp_nl_portid = mnl_socket_get_portid(l2tp_nl_sock);
 
     /* Just used ID 1 for obtaining the socket ID */
     l2tp_nl_seq = 2;
-    l2tp_nl_family2 = id;
+    l2tp_nl_family = id;
 
     if (ret) l2tp_nl_cleanup();
     return ret;
@@ -761,9 +759,9 @@ int l2tp_nl_init(void)
 
 void l2tp_nl_cleanup(void)
 {
-    if (l2tp_nl_sock2) {
-        mnl_socket_close(l2tp_nl_sock2);
-        l2tp_nl_sock2 = NULL;
+    if (l2tp_nl_sock) {
+        mnl_socket_close(l2tp_nl_sock);
+        l2tp_nl_sock = NULL;
     }
-    if (l2tp_nl_family2 > 0) l2tp_nl_family2 = -1;
+    if (l2tp_nl_family > 0) l2tp_nl_family = -1;
 }
