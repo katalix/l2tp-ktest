@@ -610,81 +610,124 @@ int l2tp_nl_session_modify(uint32_t tunnel_id, uint32_t session_id, uint32_t deb
     return ret;
 }
 
-static int l2tp_nl_session_get_response(struct nl_msg *msg, void *arg)
+static int nl_sess_get_attr_cb(const struct nlattr *attr, void *data)
 {
-    struct l2tp_session_data *data = arg;
-    struct nlmsghdr *hdr = nlmsg_hdr(msg);
-    struct nlattr *attrs[L2TP_ATTR_MAX + 1];
-    struct nlattr *nla_stats;
+    const struct nlattr **tb = data;
+    int type = mnl_attr_get_type(attr);
 
-    /* Validate message and parse attributes */
-    genlmsg_parse(hdr, 0, attrs, L2TP_ATTR_MAX, NULL);
-    if (hdr->nlmsg_type == NLMSG_ERROR) return -EBADMSG;
+    if (mnl_attr_type_valid(attr, L2TP_ATTR_MAX) < 0)
+        return MNL_CB_OK;
 
-    if (attrs[L2TP_ATTR_IFNAME]) {
-        data->ifname = strdup(nla_get_string(attrs[L2TP_ATTR_IFNAME]));
+    switch(type) {
+    case L2TP_ATTR_IFNAME:
+        if (mnl_attr_validate(attr, MNL_TYPE_STRING) < 0) {
+            return MNL_CB_ERROR;
+        }
+        break;
     }
-    nla_stats = attrs[L2TP_ATTR_STATS];
-    if (nla_stats) {
-        struct nlattr *tb[L2TP_ATTR_STATS_MAX + 1];
-        int ret;
+    tb[type] = attr;
+    return MNL_CB_OK;
+}
 
-        ret = nla_parse_nested(tb, L2TP_ATTR_STATS_MAX, nla_stats, NULL);
-        if (ret < 0) return ret;
+static int nl_sess_get_stats_attr_cb(const struct nlattr *attr, void *data)
+{
+    const struct nlattr **tb = data;
+    int type = mnl_attr_get_type(attr);
 
-        if (tb[L2TP_ATTR_TX_PACKETS])
-            data->stats.data_tx_packets = nla_get_u64(tb[L2TP_ATTR_TX_PACKETS]);
-        if (tb[L2TP_ATTR_TX_BYTES])
-            data->stats.data_tx_bytes = nla_get_u64(tb[L2TP_ATTR_TX_BYTES]);
-        if (tb[L2TP_ATTR_TX_ERRORS])
-            data->stats.data_tx_errors = nla_get_u64(tb[L2TP_ATTR_TX_ERRORS]);
-        if (tb[L2TP_ATTR_RX_PACKETS])
-            data->stats.data_rx_packets = nla_get_u64(tb[L2TP_ATTR_RX_PACKETS]);
-        if (tb[L2TP_ATTR_RX_BYTES])
-            data->stats.data_rx_bytes = nla_get_u64(tb[L2TP_ATTR_RX_BYTES]);
-        if (tb[L2TP_ATTR_RX_ERRORS])
-            data->stats.data_rx_errors = nla_get_u64(tb[L2TP_ATTR_RX_ERRORS]);
-        if (tb[L2TP_ATTR_RX_SEQ_DISCARDS])
-            data->stats.data_rx_oos_discards = nla_get_u64(tb[L2TP_ATTR_RX_SEQ_DISCARDS]);
-        if (tb[L2TP_ATTR_RX_OOS_PACKETS])
-            data->stats.data_rx_oos_packets = nla_get_u64(tb[L2TP_ATTR_RX_OOS_PACKETS]);
+    if (mnl_attr_type_valid(attr, L2TP_ATTR_STATS_MAX) < 0)
+        return MNL_CB_OK;
+
+    switch(type) {
+    case L2TP_ATTR_TX_PACKETS:
+    case L2TP_ATTR_TX_BYTES:
+    case L2TP_ATTR_TX_ERRORS:
+    case L2TP_ATTR_RX_PACKETS:
+    case L2TP_ATTR_RX_BYTES:
+    case L2TP_ATTR_RX_ERRORS:
+    case L2TP_ATTR_RX_SEQ_DISCARDS:
+    case L2TP_ATTR_RX_OOS_PACKETS:
+        if (mnl_attr_validate(attr, MNL_TYPE_U64) < 0) return MNL_CB_ERROR;
+        break;
+    default:
+        return MNL_CB_OK;
+    }
+    tb[type] = attr;
+    return MNL_CB_OK;
+}
+
+static int nl_sess_get_cb(const struct nlmsghdr *nlh, void *dptr)
+{
+    assert(nlh);
+    assert(dptr);
+
+    struct nlattr *tb[L2TP_ATTR_MAX + 1] = {};
+    struct l2tp_session_data *data = dptr;
+    int ret;
+
+    ret = mnl_attr_parse(nlh, sizeof(struct genlmsghdr), nl_sess_get_attr_cb, tb);
+    if (ret < 0) {
+        return MNL_CB_ERROR;
     }
 
-    return 0;
+    if (tb[L2TP_ATTR_IFNAME]) {
+        data->ifname = strdup(mnl_attr_get_str(tb[L2TP_ATTR_IFNAME]));
+    }
+    if (tb[L2TP_ATTR_STATS]) {
+        struct nlattr *tbs[L2TP_ATTR_STATS_MAX + 1] = {};
+        struct l2tp_session_stats *stats = &data->stats;
+
+        ret = mnl_attr_parse_nested(tb[L2TP_ATTR_STATS], nl_sess_get_stats_attr_cb, tbs);
+        if (ret < 0) {
+            return MNL_CB_ERROR;
+        }
+        if (tbs[L2TP_ATTR_TX_PACKETS])
+            stats->data_tx_packets = mnl_attr_get_u64(tbs[L2TP_ATTR_TX_PACKETS]);
+        if (tbs[L2TP_ATTR_TX_BYTES])
+            stats->data_tx_bytes = mnl_attr_get_u64(tbs[L2TP_ATTR_TX_BYTES]);
+        if (tbs[L2TP_ATTR_TX_ERRORS])
+            stats->data_tx_errors = mnl_attr_get_u64(tbs[L2TP_ATTR_TX_ERRORS]);
+        if (tbs[L2TP_ATTR_RX_PACKETS])
+            stats->data_rx_packets = mnl_attr_get_u64(tbs[L2TP_ATTR_RX_PACKETS]);
+        if (tbs[L2TP_ATTR_RX_BYTES])
+            stats->data_rx_bytes = mnl_attr_get_u64(tbs[L2TP_ATTR_RX_BYTES]);
+        if (tbs[L2TP_ATTR_RX_ERRORS])
+            stats->data_rx_errors = mnl_attr_get_u64(tbs[L2TP_ATTR_RX_ERRORS]);
+        if (tbs[L2TP_ATTR_RX_SEQ_DISCARDS])
+            stats->data_rx_oos_discards = mnl_attr_get_u64(tbs[L2TP_ATTR_RX_SEQ_DISCARDS]);
+        if (tbs[L2TP_ATTR_RX_OOS_PACKETS])
+            stats->data_rx_oos_packets = mnl_attr_get_u64(tbs[L2TP_ATTR_RX_OOS_PACKETS]);
+    }
+    return MNL_CB_OK;
 }
 
 int l2tp_nl_session_get(uint32_t tunnel_id, uint32_t session_id, struct l2tp_session_data *data)
 {
-    struct nl_msg *msg;
-    struct nl_cb *cb;
+    struct nlmsghdr *nlh;
+    struct genlmsghdr *gnlh;
+    char buf[1024] = {};
     int ret;
+
+    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
 
     if (!data) return -EINVAL;
 
-    if (l2tp_nl_family <= 0) return -EPROTONOSUPPORT;
-
-    cb = nl_cb_alloc(NL_CB_DEFAULT);
-    if (!cb) return -ENOMEM;
-    nl_cb_set(cb, NL_CB_VALID, NL_CB_CUSTOM, l2tp_nl_session_get_response, data);
-
-    msg = nlmsg_alloc();
-    if (!msg) {
-        ret = -ENOMEM;
-        goto out_put_cb;
-    }
-
     dbg("%s: tid %" PRIu32 ", sid %" PRIu32 "\n", __func__, tunnel_id, session_id);
 
-    genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, l2tp_nl_family, 0, NLM_F_REQUEST,
-            L2TP_CMD_SESSION_GET, L2TP_GENL_VERSION);
+    nlh = mnl_nlmsg_put_header(buf);
+    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_flags = NLM_F_REQUEST;
+    nlh->nlmsg_seq = l2tp_nl_seq++;
+    nlh->nlmsg_pid = l2tp_nl_portid;
 
-    nla_put_u32(msg, L2TP_ATTR_CONN_ID, tunnel_id);
-    nla_put_u32(msg, L2TP_ATTR_SESSION_ID, session_id);
+    gnlh = mnl_nlmsg_put_extra_header(nlh, sizeof(*gnlh));
+    gnlh->cmd = L2TP_CMD_SESSION_GET;
+    gnlh->version = L2TP_GENL_VERSION;
+    gnlh->reserved = 0;
 
-    ret = do_nl_send_recv(l2tp_nl_sock, msg, cb);
-    nlmsg_free(msg);
-out_put_cb:
-    nl_cb_put(cb);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_SESSION_ID, session_id);
+
+    ret = do_nl_send_recv2(l2tp_nl_sock2, nlh, nl_sess_get_cb, data);
     if (ret == 0) {
         dbg("%s: ifname %s\n", __func__, data->ifname ? data->ifname : "unset");
         dbg("%s: stats: tx: %" PRIu64 "/%" PRIu64 "/%" PRIu64" pkt/bytes/err\n",
