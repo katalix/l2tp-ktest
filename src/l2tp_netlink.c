@@ -8,16 +8,14 @@
 #include <inttypes.h>
 #include <sys/types.h>
 
-#include <netlink/netlink.h>
-#include <netlink/genl/genl.h>
-#include <netlink/genl/ctrl.h>
-#include <netlink/route/link.h>
 #include <libmnl/libmnl.h>
 #include <linux/l2tp.h>
+#include <linux/genetlink.h>
 #include <errno.h>
 #include <unistd.h>
 #include <assert.h>
 #include <pthread.h>
+#include <string.h>
 
 #include "l2tp_netlink.h"
 #include "util.h"
