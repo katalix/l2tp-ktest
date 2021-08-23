@@ -547,24 +547,30 @@ int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t
 
 int l2tp_nl_session_delete(uint32_t tunnel_id, uint32_t session_id)
 {
-    struct nl_msg *msg;
+    struct nlmsghdr *nlh;
+    struct genlmsghdr *gnlh;
+    char buf[1024] = {};
     int ret;
 
-    if (l2tp_nl_family <= 0) return -EPROTONOSUPPORT;
-
-    msg = nlmsg_alloc();
-    if (!msg) return -ENOMEM;
+    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
 
     dbg("%s: tid %" PRIu32 ", sid %" PRIu32 "\n", __func__, tunnel_id, session_id);
 
-    genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, l2tp_nl_family, 0, NLM_F_REQUEST,
-            L2TP_CMD_SESSION_DELETE, L2TP_GENL_VERSION);
+    nlh = mnl_nlmsg_put_header(buf);
+    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    nlh->nlmsg_seq = l2tp_nl_seq++;
+    nlh->nlmsg_pid = l2tp_nl_portid;
 
-    nla_put_u32(msg, L2TP_ATTR_CONN_ID, tunnel_id);
-    nla_put_u32(msg, L2TP_ATTR_SESSION_ID, session_id);
+    gnlh = mnl_nlmsg_put_extra_header(nlh, sizeof(*gnlh));
+    gnlh->cmd = L2TP_CMD_SESSION_DELETE;
+    gnlh->version = L2TP_GENL_VERSION;
+    gnlh->reserved = 0;
 
-    ret = do_nl_send(l2tp_nl_sock, msg);
-    nlmsg_free(msg);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_SESSION_ID, session_id);
+
+    ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
     my_nl_exit_log(ret);
 
