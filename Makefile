@@ -11,7 +11,7 @@ DEPFLAGS	:= -MT $@ -MMD -MP -MF $(DEPDIR)/$*.Td
 
 COMMON_SOURCES 	:= $(SRCDIR)/l2tp_netlink.c
 COMMON_SOURCES 	+= $(SRCDIR)/util.c $(SRCDIR)/util_ppp_2.c
-COMMON_LIBS	:= nl-genl-3 nl-3 pthread
+COMMON_LIBS	:= nl-genl-3 nl-3 mnl pthread
 
 OPT_NO_SYZBOT_APPS := 0
 

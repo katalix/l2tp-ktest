@@ -12,6 +12,7 @@
 #include <netlink/genl/genl.h>
 #include <netlink/genl/ctrl.h>
 #include <netlink/route/link.h>
+#include <libmnl/libmnl.h>
 #include <linux/l2tp.h>
 #include <errno.h>
 #include <unistd.h>
@@ -20,6 +21,11 @@
 
 #include "l2tp_netlink.h"
 #include "util.h"
+
+/* Temporary define to be removed when mnl port is complete */
+#ifndef MNL_PORT
+#define MNL_PORT 1
+#endif
 
 /* Timeout for netlink operations.
  * It's possible in some circumstances for a netlink request to receive
@@ -30,8 +36,14 @@
 #define GENL_TIMEOUT_DFLT 2000
 
 static pthread_mutex_t l2tp_nl_lock = PTHREAD_MUTEX_INITIALIZER;
+#ifdef MNL_PORT
 static struct nl_sock *l2tp_nl_sock;
 static int l2tp_nl_family = -1;
+#endif
+static struct mnl_socket *l2tp_nl_sock2;
+static uint16_t l2tp_nl_family2 = 0;
+static int l2tp_nl_seq;
+static unsigned int l2tp_nl_portid;
 
 static int nlerr_to_errno(int e)
 {
@@ -82,6 +94,7 @@ static int do_nl_send(struct nl_sock *sk, struct nl_msg *msg)
     return ret;
 }
 
+#ifdef MNL_PORT
 static int do_nl_send_recv(struct nl_sock *sk, struct nl_msg *msg, struct nl_cb *cb)
 {
     int ret;
@@ -117,6 +130,7 @@ again:
 
     return ret;
 }
+#endif
 
 int l2tp_nl_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, int fd, struct l2tp_tunnel_nl_config *cfg)
 {
@@ -531,10 +545,103 @@ out_put_cb:
     return ret;
 }
 
+static int genl_skt_data_attr_cb(const struct nlattr *attr, void *data)
+{
+    const struct nlattr **tb = data;
+    int type = mnl_attr_get_type(attr);
+
+    if (mnl_attr_type_valid(attr, CTRL_ATTR_MAX) < 0)
+        return MNL_CB_OK;
+
+    switch(type) {
+    case CTRL_ATTR_FAMILY_NAME:
+        if (mnl_attr_validate(attr, MNL_TYPE_STRING) < 0) {
+            return MNL_CB_ERROR;
+        }
+        break;
+    case CTRL_ATTR_FAMILY_ID:
+        if (mnl_attr_validate(attr, MNL_TYPE_U16) < 0) {
+            return MNL_CB_ERROR;
+        }
+        break;
+    case CTRL_ATTR_VERSION:
+    case CTRL_ATTR_HDRSIZE:
+    case CTRL_ATTR_MAXATTR:
+        if (mnl_attr_validate(attr, MNL_TYPE_U32) < 0) {
+            return MNL_CB_ERROR;
+        }
+        break;
+    case CTRL_ATTR_OPS:
+    case CTRL_ATTR_MCAST_GROUPS:
+        if (mnl_attr_validate(attr, MNL_TYPE_NESTED) < 0) {
+            return MNL_CB_ERROR;
+        }
+        break;
+    }
+    tb[type] = attr;
+    return MNL_CB_OK;
+}
+
+static int genl_skt_data_cb(const struct nlmsghdr *nlh, void *data)
+{
+    struct nlattr *tb[CTRL_ATTR_MAX+1] = {};
+    uint16_t *id = data;
+
+    mnl_attr_parse(nlh, sizeof(struct genlmsghdr), genl_skt_data_attr_cb, tb);
+    if (tb[CTRL_ATTR_FAMILY_ID]) {
+        *id = mnl_attr_get_u16(tb[CTRL_ATTR_FAMILY_ID]);
+    }
+    return MNL_CB_OK;
+}
+
+static int genl_get_skt_id(struct mnl_socket *sock,
+                           int version,
+                           const char *family_name,
+                           uint16_t *id)
+{
+    assert(sock);
+    assert(version);
+    assert(family_name);
+    assert(id);
+
+    struct genlmsghdr *genl;
+    uint8_t msg[1024] = {};
+    uint8_t hdr[128] = {};
+    struct nlmsghdr *nlh;
+    int ret;
+
+    nlh = mnl_nlmsg_put_header(hdr);
+    nlh->nlmsg_type = GENL_ID_CTRL;
+    nlh->nlmsg_flags = NLM_F_REQUEST;
+    nlh->nlmsg_seq = 1;
+    nlh->nlmsg_pid = l2tp_nl_portid;
+
+    genl = mnl_nlmsg_put_extra_header(nlh, sizeof(struct genlmsghdr));
+    genl->cmd = CTRL_CMD_GETFAMILY;
+    genl->version = version;
+
+    mnl_attr_put_u16(nlh, CTRL_ATTR_FAMILY_ID, GENL_ID_CTRL);
+    mnl_attr_put_strz(nlh, CTRL_ATTR_FAMILY_NAME, family_name);
+
+    if (opt_debug) mnl_nlmsg_fprintf(stdout, nlh, nlh->nlmsg_len, 0);
+    if (mnl_socket_sendto(sock, nlh, nlh->nlmsg_len) < 0) return -errno;
+    ret = mnl_socket_recvfrom(sock, msg, sizeof(msg));
+    if (ret > 0) {
+        nlh = (void *) &msg[0];
+        if (opt_debug) mnl_nlmsg_fprintf(stdout, nlh, ret, 0);
+        ret = mnl_cb_run(nlh, ret, nlh->nlmsg_seq, 0, genl_skt_data_cb, id);
+    }
+    if (ret == -1) return -errno;
+    return 0;
+}
+
+
 int l2tp_nl_init(void)
 {
     int ret = 0;
+    uint16_t id = 0;
 
+#ifdef MNL_PORT
     if (l2tp_nl_sock) return -EALREADY;
 
     l2tp_nl_sock = nl_socket_alloc();
@@ -562,18 +669,55 @@ int l2tp_nl_init(void)
         err("nl_socket_set_nonblocking() failed: %s\n", nl_geterror(ret));
         goto out;
     }
+#endif
 
+    if (l2tp_nl_sock2) return -EALREADY;
+
+    l2tp_nl_sock2 = mnl_socket_open(NETLINK_GENERIC);
+    if (!l2tp_nl_sock2)
+        return -errno;
+
+    ret = mnl_socket_bind(l2tp_nl_sock2, 0, MNL_SOCKET_AUTOPID);
+    if (ret) {
+        mnl_socket_close(l2tp_nl_sock2);
+        return -errno;
+    }
+
+    l2tp_nl_portid = mnl_socket_get_portid(l2tp_nl_sock2);
+
+    /* Send command to get the socket's id */
+    ret = genl_get_skt_id(l2tp_nl_sock2, L2TP_GENL_VERSION, L2TP_GENL_NAME, &id);
+    if (ret || !id) {
+        mnl_socket_close(l2tp_nl_sock2);
+        return -EPROTONOSUPPORT;
+    }
+
+    l2tp_nl_portid = mnl_socket_get_portid(l2tp_nl_sock2);
+
+    /* Just used ID 1 for obtaining the socket ID */
+    l2tp_nl_seq = 2;
+    l2tp_nl_family2 = id;
+
+#ifdef MNL_PORT
 out:
+#endif
     if (ret) l2tp_nl_cleanup();
     return ret;
 }
 
 void l2tp_nl_cleanup(void)
 {
+#ifdef MNL_PORT
     if (l2tp_nl_sock) {
         nl_close(l2tp_nl_sock);
         nl_socket_free(l2tp_nl_sock);
         l2tp_nl_sock = NULL;
     }
     if (l2tp_nl_family > 0) l2tp_nl_family = -1;
+#endif
+    if (l2tp_nl_sock2) {
+        mnl_socket_close(l2tp_nl_sock2);
+        l2tp_nl_sock2 = NULL;
+    }
+    if (l2tp_nl_family2 > 0) l2tp_nl_family2 = -1;
 }
