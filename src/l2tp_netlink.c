@@ -47,6 +47,7 @@ static uint16_t l2tp_nl_family2 = 0;
 static int l2tp_nl_seq;
 static unsigned int l2tp_nl_portid;
 
+#ifdef MNL_PORT
 static int nlerr_to_errno(int e)
 {
     e = abs(e);
@@ -78,6 +79,7 @@ static int nlerr_to_errno(int e)
         _ret = -nlerr_to_errno(_ret); \
     } else dbg("%s: ret 0\n", __func__); \
 } while(0)
+#endif
 
 #ifdef MNL_PORT
 static int do_nl_send(struct nl_sock *sk, struct nl_msg *msg)
@@ -276,7 +278,7 @@ int l2tp_nl_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, int fd, s
     mnl_attr_put_u32(nlh, L2TP_ATTR_DEBUG, cfg->debug);
     ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
 
     return ret;
 }
@@ -307,7 +309,7 @@ int l2tp_nl_tunnel_delete(uint32_t tunnel_id)
 
     ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
 
     return ret;
 }
@@ -339,7 +341,7 @@ int l2tp_nl_tunnel_modify(uint32_t tunnel_id, uint32_t debug)
 
     ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
 
     return ret;
 }
@@ -449,7 +451,8 @@ int l2tp_nl_tunnel_get(uint32_t tunnel_id, struct l2tp_tunnel_stats *stats)
 
     ret = do_nl_send_recv2(l2tp_nl_sock2, nlh, nl_tunl_get_cb, stats);
 
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
+
     return ret;
 }
 
@@ -540,7 +543,7 @@ int l2tp_nl_session_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, uint32_t
 
     ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
 
     return ret;
 }
@@ -572,7 +575,7 @@ int l2tp_nl_session_delete(uint32_t tunnel_id, uint32_t session_id)
 
     ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
 
     return ret;
 }
@@ -605,7 +608,7 @@ int l2tp_nl_session_modify(uint32_t tunnel_id, uint32_t session_id, uint32_t deb
 
     ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
 
     return ret;
 }
@@ -737,7 +740,8 @@ int l2tp_nl_session_get(uint32_t tunnel_id, uint32_t session_id, struct l2tp_ses
         dbg("%s: stats: rx: %" PRIu64 "/%" PRIu64 " seq_discard/oos\n",
                 __func__, data->stats.data_rx_oos_discards, data->stats.data_rx_oos_packets);
     }
-    my_nl_exit_log(ret);
+    dbg("%s: ret %d\n", __func__, ret);
+
     return ret;
 }
 
