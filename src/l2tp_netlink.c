@@ -218,20 +218,27 @@ static int do_nl_send_recv2(struct mnl_socket *sk, struct nlmsghdr *nlh, mnl_cb_
 
 int l2tp_nl_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, int fd, struct l2tp_tunnel_nl_config *cfg)
 {
-    struct nl_msg *msg;
     int ret;
+    struct nlmsghdr *nlh;
+    struct genlmsghdr *gnlh;
+    char buf[1024];
 
     if (!cfg) return -EINVAL;
 
-    if (l2tp_nl_family <= 0) return -EPROTONOSUPPORT;
-
-    msg = nlmsg_alloc();
-    if (!msg) return -ENOMEM;
+    if (l2tp_nl_family2 == 0) return -EPROTONOSUPPORT;
 
     dbg("%s: tid %" PRIu32 ", ptid %" PRIu32 "\n", __func__, tunnel_id, peer_tunnel_id);
 
-    genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, l2tp_nl_family, 0, NLM_F_REQUEST,
-            L2TP_CMD_TUNNEL_CREATE, L2TP_GENL_VERSION);
+    nlh = mnl_nlmsg_put_header(buf);
+    nlh->nlmsg_type = l2tp_nl_family2;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    nlh->nlmsg_seq = l2tp_nl_seq++;
+    nlh->nlmsg_pid = l2tp_nl_portid;
+
+    gnlh = mnl_nlmsg_put_extra_header(nlh, sizeof(*gnlh));
+    gnlh->cmd = L2TP_CMD_TUNNEL_CREATE;
+    gnlh->version = L2TP_GENL_VERSION;
+    gnlh->reserved = 0;
 
     /* An fd < 0 implies creation of an unmanaged tunnel: omit the L2TP_ATTR_FD
      * attribute in this case so that the kernel creates its own socket.
@@ -245,31 +252,29 @@ int l2tp_nl_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, int fd, s
             cfg->encap_type,
             cfg->debug);
     if (fd >= 0) {
-        nla_put_u32(msg, L2TP_ATTR_FD, fd);
+        mnl_attr_put_u32(nlh, L2TP_ATTR_FD, fd);
     } else {
         {
             int ipattr = cfg->local_addr.ss_family == AF_INET ? L2TP_ATTR_IP_SADDR : L2TP_ATTR_IP6_SADDR;
             size_t addrlen;
             void *addr = ss_get_addr(&cfg->local_addr, &addrlen);
-            nla_put(msg, ipattr, addrlen, addr);
-            nla_put_u16(msg, L2TP_ATTR_UDP_SPORT, ss_get_port(&cfg->local_addr));
+            mnl_attr_put(nlh, ipattr, addrlen, addr);
+            mnl_attr_put_u16(nlh, L2TP_ATTR_UDP_SPORT, ss_get_port(&cfg->local_addr));
         }
         {
             int ipattr = cfg->peer_addr.ss_family == AF_INET ? L2TP_ATTR_IP_DADDR : L2TP_ATTR_IP6_DADDR;
             size_t addrlen;
             void *addr = ss_get_addr(&cfg->peer_addr, &addrlen);
-            nla_put(msg, ipattr, addrlen, addr);
-            nla_put_u16(msg, L2TP_ATTR_UDP_DPORT, ss_get_port(&cfg->peer_addr));
+            mnl_attr_put(nlh, ipattr, addrlen, addr);
+            mnl_attr_put_u16(nlh, L2TP_ATTR_UDP_DPORT, ss_get_port(&cfg->peer_addr));
         }
     }
-    nla_put_u32(msg, L2TP_ATTR_CONN_ID, tunnel_id);
-    nla_put_u32(msg, L2TP_ATTR_PEER_CONN_ID, peer_tunnel_id);
-    nla_put_u8(msg, L2TP_ATTR_PROTO_VERSION, cfg->proto_version);
-    nla_put_u16(msg, L2TP_ATTR_ENCAP_TYPE, cfg->encap_type);
-    nla_put_u32(msg, L2TP_ATTR_DEBUG, cfg->debug);
-
-    ret = do_nl_send(l2tp_nl_sock, msg);
-    nlmsg_free(msg);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_CONN_ID, tunnel_id);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_PEER_CONN_ID, peer_tunnel_id);
+    mnl_attr_put_u8(nlh, L2TP_ATTR_PROTO_VERSION, cfg->proto_version);
+    mnl_attr_put_u16(nlh, L2TP_ATTR_ENCAP_TYPE, cfg->encap_type);
+    mnl_attr_put_u32(nlh, L2TP_ATTR_DEBUG, cfg->debug);
+    ret = do_nl_send2(l2tp_nl_sock2, nlh);
 
     my_nl_exit_log(ret);
 
