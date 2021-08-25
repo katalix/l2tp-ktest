@@ -27,6 +27,7 @@
 #define MNL_PORT 1
 #endif
 
+#ifdef MNL_PORT
 /* Timeout for netlink operations.
  * It's possible in some circumstances for a netlink request to receive
  * no response from the kernel.  Rather than having callers hang forever
@@ -34,6 +35,7 @@
  * kernel.
  */
 #define GENL_TIMEOUT_DFLT 2000
+#endif
 
 static pthread_mutex_t l2tp_nl_lock = PTHREAD_MUTEX_INITIALIZER;
 #ifdef MNL_PORT
@@ -77,6 +79,7 @@ static int nlerr_to_errno(int e)
     } else dbg("%s: ret 0\n", __func__); \
 } while(0)
 
+#ifdef MNL_PORT
 static int do_nl_send(struct nl_sock *sk, struct nl_msg *msg)
 {
     int ret;
@@ -91,6 +94,36 @@ static int do_nl_send(struct nl_sock *sk, struct nl_msg *msg)
     }
     pthread_mutex_unlock(&l2tp_nl_lock);
 
+    return ret;
+}
+#endif
+
+__attribute__((unused))
+static int do_nl_send2(struct mnl_socket *sk, struct nlmsghdr *nlh)
+{
+    int ret;
+    char buf[1024];
+
+    if (!sk || !nlh) return -EINVAL;
+
+    pthread_mutex_lock(&l2tp_nl_lock);
+    if (opt_debug) mnl_nlmsg_fprintf(stdout, nlh, nlh->nlmsg_len, 0);
+    if (mnl_socket_sendto(sk, nlh, nlh->nlmsg_len) < 0) {
+        ret = -errno;
+        goto out;
+    }
+    ret = mnl_socket_recvfrom(sk, buf, sizeof(buf));
+    if (ret > 0) {
+        struct nlmsghdr *rnlh = (void *)&buf[0];
+        if (opt_debug) mnl_nlmsg_fprintf(stdout, rnlh, ret, 0);
+        ret = mnl_cb_run(rnlh, ret, rnlh->nlmsg_seq, 0, NULL, NULL);
+        if (ret < 0 && errno) {
+            ret = -errno;
+        }
+    }
+  out:
+    pthread_mutex_unlock(&l2tp_nl_lock);
+    if (ret > 0) ret = 0;
     return ret;
 }
 
@@ -131,6 +164,57 @@ again:
     return ret;
 }
 #endif
+
+__attribute__((unused))
+static int do_nl_send_recv2(struct mnl_socket *sk, struct nlmsghdr *nlh, mnl_cb_t cb, void *cb_data)
+{
+    char buf[1024] = {};
+    int ret;
+
+    if (!sk || !nlh || !cb) return -EINVAL;
+
+    pthread_mutex_lock(&l2tp_nl_lock);
+    if (opt_debug) mnl_nlmsg_fprintf(stdout, nlh, nlh->nlmsg_len, 0);
+    if (mnl_socket_sendto(sk, nlh, nlh->nlmsg_len) < 0) {
+        ret = -errno;
+        goto out;
+    }
+
+    ret = mnl_socket_recvfrom(sk, buf, sizeof(buf));
+    if (ret > 0) {
+        struct nlmsghdr *rnlh = (void *)&buf[0];
+        int nl_len = ret;
+        while (mnl_nlmsg_ok(rnlh, nl_len)) {
+            if (opt_debug) mnl_nlmsg_fprintf(stdout, rnlh, rnlh->nlmsg_len, 0);
+            if (rnlh->nlmsg_type == l2tp_nl_family) {
+                /* We can't use mnl_cb_run with GENL, so call the user's callback directly. */
+                if (nlh->nlmsg_seq == rnlh->nlmsg_seq && rnlh->nlmsg_pid == l2tp_nl_portid) {
+                    ret = cb(rnlh, cb_data);
+                    if (ret < 0 && errno) {
+                        ret = -errno;
+                    }
+                } else {
+                    ret = -EPROTO;
+                }
+            } else {
+                /* in case NLF_F_ACK is requested with a Get request */
+                ret = mnl_cb_run(rnlh, ret, rnlh->nlmsg_seq, 0, NULL, NULL);
+                if (ret < 0 && errno) {
+                    ret = -errno;
+                }
+            }
+            if (ret <= MNL_CB_STOP) {
+                goto out;
+            }
+            rnlh = mnl_nlmsg_next(rnlh, &nl_len);
+        }
+    }
+
+  out:
+    pthread_mutex_unlock(&l2tp_nl_lock);
+    if (ret > 0) ret = 0;
+    return ret;
+}
 
 int l2tp_nl_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id, int fd, struct l2tp_tunnel_nl_config *cfg)
 {
