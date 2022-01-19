@@ -96,7 +96,8 @@ is_tunnel() { local i; for i in $(get_tunnel_ids); do if test $i -eq $1; then re
 delay_no_tunnel() {
     local i=0
     # some kernels seem to lag on tunnel destroy, so let's try to account for that
-    while test $(count_tunnels) -ne 0 && test $i -lt 20; do sleep 0.2s; i=$((i+1)); done
+    while ( test $(count_tunnels) -ne 0 || $(ip link show | grep -q l2tpeth) || $(ip link show | grep -q ppp) ) && \
+              test $i -lt 20; do sleep 0.2s; i=$((i+1)); done
 }
 close_tunnel() {
     local i=0
@@ -205,7 +206,8 @@ unmanaged_tunl_check()
     # Close the newly created tunnel(s)
     for i in $(get_tunnel_ids); do check close_tunnel $i; done
     check test $(count_tunnels) -eq 0
-
+    delay_no_tunnel
+    
     # App exit after closing the tunnel should result in tunnel delete
     check $(dirname $0)/kcreate -v $1 -c $2 -d $3 -e $4 -f $5 $pw
     delay_no_tunnel
