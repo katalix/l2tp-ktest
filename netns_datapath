@@ -41,6 +41,23 @@ wait_file_contains()
     false
 }
 
+# $1 -- file path
+# $2 -- sample interval
+# $3 -- max number of checks to perform
+wait_file_exists()
+{
+    local filename="$1"
+    local interval="$2"
+    local max_polls="$3"
+    local n
+    for n in $(seq 0 $max_polls)
+    do
+        test -f "$filename" && return
+        sleep $interval
+    done
+    false
+}
+
 #
 # Network namespace helpers
 #
@@ -196,7 +213,7 @@ netns_sess_dataif_pair()
     dbg "$lns: sess_dataif $lns_sess_dataif_args"
     dbg "$lac: sess_dataif $lac_sess_dataif_args"
 
-    rm -f /tmp/l2tp-ktest-sess-dataif-s /tmp/l2tp-ktest-sess-dataif-c
+    rm -f /tmp/l2tp-ktest-sess-dataif-s* /tmp/l2tp-ktest-sess-dataif-c*
 
     # Always make sess_dataif be quiet since its output isn't useful in this context.
     # Just in case the user specified OPT_DEBUG, unset it now since sess_dataif will
@@ -204,8 +221,28 @@ netns_sess_dataif_pair()
     unset OPT_DEBUG
     OPT_QUIET=1 ip netns exec $lns ./sess_dataif $lns_sess_dataif_args &
 
+    wait_file_exists /tmp/l2tp-ktest-sess-dataif-s-created-1 0.1 20 || {
+        err "Timeout waiting for LNS L2TP tunnel to be created"
+        return 1
+    }
+
     OPT_QUIET=1 ip netns exec $lac ./sess_dataif $lac_sess_dataif_args &
     test $is_debug -eq 1 && export OPT_DEBUG=1
+
+    wait_file_exists /tmp/l2tp-ktest-sess-dataif-c-created-2 0.1 20 || {
+        err "Timeout waiting for LAC L2TP tunnel to be created"
+        return 1
+    }
+
+    wait_file_exists /tmp/l2tp-ktest-sess-dataif-s-up-1 0.5 10 || {
+        err "Timeout waiting for LNS L2TP tunnel to be up"
+        return 1
+    }
+
+    wait_file_exists /tmp/l2tp-ktest-sess-dataif-c-up-2 0.5 10 || {
+        err "Timeout waiting for LAC L2TP tunnel to be up"
+        return 1
+    }
 
     # Wait for interface(s) with the name containing substring "0",
     # since this will match either "ppp0" or "l2tpeth0".
