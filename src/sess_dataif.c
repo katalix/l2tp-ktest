@@ -121,6 +121,17 @@ void show_usage(const char *myname)
     printf("\n");
 }
 
+static void tunnel_indicate_created(struct tunnel_options *to)
+{
+    char filename[PATH_MAX];
+    FILE *f;
+
+    snprintf(filename, PATH_MAX, "%s-created-%u", g_status_filename, to->lo.tid);
+    f = fopen(filename, "w");
+    if (!f) die("unable to write tunnel created indication");
+    fclose(f);
+}
+
 static void tunnel_indicate_up(struct tunnel_options *to)
 {
     char filename[PATH_MAX];
@@ -254,6 +265,8 @@ static void on_quit(int sig)
 static void *tunnel_thread(void *dptr)
 {
     struct tunnel_options *to = dptr;
+
+    tunnel_indicate_created(to);
 
     /* wait for peer */
     wait_peer(to);
