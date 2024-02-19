@@ -99,6 +99,8 @@ netns_create_ns()
 
     ip netns add $ns
 
+    ip netns exec $ns sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+
     ip -netns $ns link set lo up
     test -n "$addr" && ip -netns $ns addr add dev lo $addr
     test -n "$addr6" && ip -netns $ns -6 addr add dev lo $addr6
