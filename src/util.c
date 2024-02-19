@@ -35,6 +35,11 @@
 #include "util.h"
 #include "util_ppp.h"
 
+#ifndef IPPROTO_L2TP
+/* in case this definition isn't in l2tp.h or libc in.h */
+#define IPPROTO_L2TP 115
+#endif
+
 bool opt_debug = false;
 bool opt_quiet = false;
 bool opt_silent = false;
