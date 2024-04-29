@@ -77,6 +77,11 @@ ppp_bridge_api_SRCS := $(SRCDIR)/ppp_bridge_api.c $(COMMON_SOURCES)
 ppp_bridge_api_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,ppp_bridge_api))
 
+# icmp_errors
+icmp_errors_SRCS := $(SRCDIR)/icmp_errors.c $(COMMON_SOURCES)
+icmp_errors_LIBS := $(COMMON_LIBS)
+$(eval $(call buildapp,icmp_errors))
+
 # syzbot reproducers
 ifeq ($(OPT_NO_SYZBOT_APPS),0)
 include $(SRCDIR)/syzbot/syzbot.mk
