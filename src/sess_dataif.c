@@ -551,7 +551,7 @@ int main(int argc, char **argv)
 
     run_tunnels(&lo, &ro);
     if (g_status_file) fclose(g_status_file);
-    unlink(g_status_filename);
+    if (g_status_filename) unlink(g_status_filename);
 
     return 0;
 }
