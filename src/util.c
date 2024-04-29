@@ -64,10 +64,13 @@ static void __attribute__((constructor)) _test_init(void)
         die("OPT_DEBUG environment variable is set as well as one of OPT_QUIET or OPT_SILENT\n");
     }
 
-    if (getenv("OPT_RNG_SEED")) {
-        int seed = atoi(getenv("OPT_RNG_SEED"));
-        srandom(seed);
-    } else seedprng();
+    {
+        char *rng_seed = getenv("OPT_RNG_SEED");
+        if (rng_seed) {
+            int seed = atoi(rng_seed);
+            srandom(seed);
+        } else seedprng();
+    }
 
     l2tp_nl_init();
 }
