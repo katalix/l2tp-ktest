@@ -418,6 +418,48 @@ then
     }
 fi
 
+# $1 -- family
+# $2 -- with msg_errqueue
+# $3 -- l2tp version
+# $4 -- encap
+do_icmp_error_handling_validation()
+{
+    local msg_errqueue=""
+    local l2tp=""
+    local encap=""
+
+    test -n "$2" && test "$2" -eq 1 && msg_errqueue="-m"
+    test -n "$3" && test "$3" -eq 2 && l2tp="-v 2"
+    test -n "$3" && test "$3" -eq 3 && l2tp="-v 3"
+    test -n "$4" && encap="-e $4"
+
+    check $(dirname $0)/icmp_errors -f $1 $msg_errqueue $encap $l2tp
+}
+
+tc_api_icmp_inet() { do_icmp_error_handling_validation inet; }
+tc_api_icmp_inet_msgerrqueue() { do_icmp_error_handling_validation inet 1; }
+
+tc_api_icmp_inet6() { do_icmp_error_handling_validation inet6; }
+tc_api_icmp_inet6_msgerrqueue() { do_icmp_error_handling_validation inet6 1; }
+
+if test $HAVE_L2TP_ICMP_ERROR_HANDLING -eq 1
+then
+    tc_api_icmp_l2tp_v2_udp_inet() { do_icmp_error_handling_validation inet 0 2 udp; }
+    tc_api_icmp_l2tp_v2_udp_inet6() { do_icmp_error_handling_validation inet6 0 2 udp; }
+    tc_api_icmp_l2tp_v2_udp_inet_msgerrqueue() { do_icmp_error_handling_validation inet 1 2 udp; }
+    tc_api_icmp_l2tp_v2_udp_inet6_msgerrqueue() { do_icmp_error_handling_validation inet6 1 2 udp; }
+
+    tc_api_icmp_l2tp_v3_udp_inet() { do_icmp_error_handling_validation inet 0 3 udp; }
+    tc_api_icmp_l2tp_v3_udp_inet6() { do_icmp_error_handling_validation inet6 0 3 udp; }
+    tc_api_icmp_l2tp_v3_ip_inet() { do_icmp_error_handling_validation inet 0 3 ip; }
+    tc_api_icmp_l2tp_v3_ip_inet6() { do_icmp_error_handling_validation inet6 0 3 ip; }
+
+    tc_api_icmp_l2tp_v3_udp_inet_msgerrqueue() { do_icmp_error_handling_validation inet 1 3 udp; }
+    tc_api_icmp_l2tp_v3_udp_inet6_msgerrqueue() { do_icmp_error_handling_validation inet6 1 3 udp; }
+    tc_api_icmp_l2tp_v3_ip_inet_msgerrqueue() { do_icmp_error_handling_validation inet 1 3 ip; }
+    tc_api_icmp_l2tp_v3_ip_inet6_msgerrqueue() { do_icmp_error_handling_validation inet6 1 3 ip; }
+fi
+
 # $1 -- mode - delete or query
 # $2 -- family
 # $3 -- encap
