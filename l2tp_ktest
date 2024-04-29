@@ -137,7 +137,7 @@ have_ipv6_peer() { test $(kernel_version $(current_kernel_version)) -ge $(kernel
 have_ip_netns() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 8 0); }
 have_udp_encap_destroy() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 3 9 0); }
 have_l2tp_ac_pppoe() { ./kernel_has_pppiobridgechan -N $ETH_IFNAME -i 1234 -M 04:7d:7b:da:23:9c > /dev/null 2>&1; }
-have_consistent_l2tp_stats() { false; }
+have_consistent_l2tp_stats() { test $(kernel_version $(current_kernel_version)) -ge $(kernel_version 5 10 0); }
 
 # Tunnel / session lifetimes
 
