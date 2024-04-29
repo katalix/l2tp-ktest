@@ -318,7 +318,7 @@ test $HAVE_IPV6 -eq 1 && log "Have IPv6" || log "Have no IPv6"
 have_l2tpip_ipv6 && HAVE_L2TPIP_IPV6=1 || HAVE_L2TPIP_IPV6=0
 test $HAVE_L2TPIP_IPV6 -eq 1 && log "Have L2TP IP encap IPv6" || log "Have no L2TP IP encap IPv6"
 
-# Check if IPv6 peer addresss is supported
+# Check if IPv6 peer address is supported
 have_ipv6_peer && HAVE_IPV6_PEER=1 || HAVE_IPV6_PEER=0
 test $HAVE_IPV6_PEER -eq 1 && log "Have IPv6 peer_addr" || log "Have no IPv6 peer_addr"
 
