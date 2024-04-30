@@ -21,7 +21,7 @@
 #endif
 
 #ifndef PPPIOCUNBRIDGECHAN
-#define PPPIOCUNBRIDGECHAN _IO('t', 54)
+#define PPPIOCUNBRIDGECHAN _IO('t', 52)
 #endif
 
 static pthread_mutex_t race_lock = PTHREAD_MUTEX_INITIALIZER;
