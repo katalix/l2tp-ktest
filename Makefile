@@ -111,7 +111,7 @@ tags:
 .PHONY: tarball
 tarball: l2tp-ktest.tgz
 
-l2tp-ktest.tgz: $(TARGETS) l2tp_ktest
+l2tp-ktest.tgz: $(TARGETS) l2tp_ktest netns_datapath
 	tar -czf $@ $^
 
 include $(wildcard $(patsubst $(SRCDIR)/%.c,$(DEPDIR)/%.d,$(SRCS)))
