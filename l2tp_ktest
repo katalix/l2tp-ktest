@@ -90,6 +90,7 @@ check()
 # ip l2tp wrappers
 count_tunnels() { ip l2tp show tunnel | grep -c ^Tunnel; }
 count_sessions() { ip l2tp show session | grep -e " in tunnel $1" | grep -c ^Session; }
+count_all_sessions() { ip l2tp show session | grep " in tunnel " | grep -c ^Session; }
 get_tunnel_ids() { ip l2tp show tunnel | awk '/^Tun/ { gsub(/,/, ""); print $2; }'; }
 get_session_ids() { ip l2tp show session | grep -e " in tunnel $1" | awk '/^Session/ { gsub(/,/, ""); print $2; }'; }
 is_tunnel() { local i; for i in $(get_tunnel_ids); do if test $i -eq $1; then return 0; fi; done; return 1; }
@@ -303,6 +304,59 @@ ac_pppoe_data_check()
     test $HAVE_CONSISTENT_L2TP_STATS -eq 1 && opts="$opts -s"
     test $VERBOSE -eq 1 && opts="$opts -v"
     check $(dirname $0)/netns_datapath $opts ac_pppoe $@
+}
+
+# Tunnel and session ID scope
+
+# $1 -- version1
+# $2 -- version2
+# $3 -- encap1
+# $4 -- encap2
+scope_tunnel_id_check()
+{
+    $(dirname $0)/kcreate -v $1 -n -e $3 -T 1 -t 1
+    $(dirname $0)/kcreate -v $2 -n -e $4 -T 1 -t 1
+    check test $(count_tunnels) -eq 1
+
+    # Close the newly created tunnel(s)
+    for i in $(get_tunnel_ids); do check close_tunnel $i; done
+    check test $(count_tunnels) -eq 0
+    delay_no_tunnel
+}
+
+# $1 -- version1
+# $2 -- version2
+# $3 -- encap1
+# $4 -- encap2
+scope_session_id_check()
+{
+    test $1 -eq 2 && pw1=ppp || pw1=eth
+    test $2 -eq 2 && pw2=ppp || pw2=eth
+
+    # Session IDs are scoped by protocol version
+    # For L2TPv3 UDP encap, session ID collisions are supported.
+    # If a session already exists in an IP-encap tunnel, a colliding UDP
+    # session will fail.
+    nsessions_expected=2
+    test $1 -eq $2 && nsessions_expected=1
+    test $3 = udp && nsessions_expected=2
+    test $3 = ip && nsessions_expected=1
+    test $1 -eq 3 -a $4 = ip && nsessions_expected=1
+
+    $(dirname $0)/kcreate -v $1 -I -e $3 -p $pw1 -T 1 -t 1 -S 1 -s 1 \
+                 -L 127.0.0.1/5555 -P 127.0.0.1/5556 &
+    pid1=$!
+    $(dirname $0)/kcreate -v $2 -I -e $4 -p $pw2 -T 2 -t 2 -S 1 -s 1 \
+                 -L 127.0.0.1/5557 -P 127.0.0.1/5558 &
+    pid2=$!
+    sleep 0.2s
+    check test $(count_all_sessions) -eq $nsessions_expected
+
+    # Close the newly created tunnel(s)
+    for i in $(get_tunnel_ids); do check close_tunnel $i; done
+    check test $(count_tunnels) -eq 0
+    delay_no_tunnel
+    kill $pid1 $pid2 2> /dev/null
 }
 
 #
@@ -601,6 +655,28 @@ then
         fi
     fi
 fi
+
+# Tunnel and session ID scope tests
+tc_scope_tunnel_id() {
+    scope_tunnel_id_check 2 2 udp udp
+    scope_tunnel_id_check 2 3 udp udp
+    scope_tunnel_id_check 2 3 udp ip
+    scope_tunnel_id_check 3 2 udp udp
+    scope_tunnel_id_check 3 3 udp udp
+    scope_tunnel_id_check 3 3 ip ip
+    scope_tunnel_id_check 3 3 ip udp
+    scope_tunnel_id_check 3 3 udp ip
+}
+tc_scope_session_id() {
+    scope_session_id_check 2 2 udp udp
+    scope_session_id_check 2 3 udp udp
+    scope_session_id_check 2 3 udp ip
+    scope_session_id_check 3 2 udp udp
+    scope_session_id_check 3 3 udp udp
+    scope_session_id_check 3 3 ip ip
+    scope_session_id_check 3 3 ip udp
+    scope_session_id_check 3 3 udp ip
+}
 
 # Datapath sequence number checks are agnostic to the pseudowire type and socket
 # address family, and hence are all handled by a single test application which covers
