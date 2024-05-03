@@ -86,6 +86,20 @@ netns_get_stats()
         | grep "^.x.*pkts/bytes/errors" | grep -o '.x [0-9]\+/[0-9]\+/[0-9]\+' | tr '/' ' '
 }
 
+# $1 -- namespace
+# $2 -- address
+# $3 -- source port
+wait_iperf() { while [[ $(ss -N "$1" -tlpH "sport = ${3:-5201}") != *$2* ]]; do sleep 0.1; done; }
+
+# $1 -- namespace
+netns_iperf3()
+{
+    local ns="$1"
+    shift
+    dbg "$ns iperf3 $@"
+    ip netns exec $ns iperf3 --json $@
+}
+
 # $1 -- netns name
 # $2 -- lo inet address
 # $3 -- lo inet6 address
@@ -277,6 +291,68 @@ netns_sess_dataif_pair()
         err "Failed to set up LAC/LNS routing"
         return 1
     }
+}
+
+# Create extra tunnels
+# $1 -- netns
+# $2 -- l2tp version
+# $3 -- socket family
+# $4 -- encap
+possibly_create_extra_tunnels()
+{
+    test "$1" = "lns" || return
+
+    from=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f2)
+    to=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f4)
+
+    tid1=$(echo $from | cut -d/ -f1)
+    tid2=$(echo $to | cut -d/ -f1)
+
+    if test "$3" = "inet"
+    then
+        peer_addr=172.16.1.1
+        our_addr=172.16.1.2
+    else
+        peer_addr=fc00:1::1
+        our_addr=fc00:1::2
+    fi
+    dport=8000
+    sport=8000
+
+    for n in `seq 1 5000`
+    do
+        tid1=$((tid1+1))
+        tid2=$((tid2+1))
+        sport=$((sport+1))
+        dport=$((dport+1))
+        ip -netns lns l2tp add tunnel \
+           local $our_addr remote $peer_addr encap $4 \
+           udp_sport $sport udp_dport $dport \
+           tunnel_id $tid1 peer_tunnel_id $tid2
+    done
+}
+# Create extra sessions in the same tunnel that sess_dataif created
+# $1 - netns
+possibly_create_extra_sessions()
+{
+    test "$1" = "lns" || return
+
+    from=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f2)
+    to=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f4)
+
+    tid1=$(echo $from | cut -d/ -f1)
+    sid1=$(echo $from | cut -d/ -f2)
+
+    tid2=$(echo $to | cut -d/ -f1)
+    sid2=$(echo $to | cut -d/ -f2)
+
+    for n in `seq 1 5000`
+    do
+        sid1=$((sid1+1))
+        sid2=$((sid2+1))
+        ip -netns lns l2tp add session \
+           tunnel_id $tid1 session_id $sid1 peer_session_id $sid2
+    done
 }
 
 ###############################################################################
@@ -536,6 +612,73 @@ test_datapath()
             <( echo "$lns_stats_delta" | grep ^tx | cut -c4- )
 }
 
+# $1 -- l2tp version
+# $2 -- socket family
+# $3 -- encap
+# $4 -- pwtype
+# $5 -- create extra tunnels/sessions (eth pwtype only)
+test_datapath_perf()
+{
+    local l2tp_version="$1"
+    local family="$2"
+    local encap="$3"
+    local pwtype="$4"
+    local extra="$5"
+    local iperf_logfile="../test-iperf-l2tpv${l2tp_version}-${family}-${encap}-${pwtype}.log"
+
+    three_host_setup "$l2tp_version" "$family" "$encap" "$pwtype"
+
+    # Create extra tunnels and/or sessions
+    case "$extra" in
+        "tunnels")
+            possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
+            ;;
+        "sessions")
+            possibly_create_extra_sessions lns
+            ;;
+        "both")
+            possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
+            possibly_create_extra_sessions lns
+            ;;
+        "")
+            ;;
+    esac
+
+    # After bringing interfaces up there's a bit of unrelated traffic due to
+    # stack discovery and/or background processes.  So sleep a moment to let
+    # that drop off before gathering pre-ping stats.
+    sleep 2
+
+    # Prime ARP lookup and forwarding cache
+    if test "$family" = "inet"
+    then
+        check netns_ping lac -c1 -w1 -I 172.16.101.1 172.16.101.2
+    else
+        check netns_ping lac -c1 -w1 -I fc00:101::1 fc00:101::2
+    fi
+
+    # Use iperf3 to test throughput
+
+    rm -f $iperf_logfile
+    if test "$family" = "inet"
+    then
+        # TCP IPv4
+        netns_iperf3 lns -4 -s -1 --logfile /dev/null -B 172.16.101.2 &
+        wait_iperf lns 172.16.101.2
+        netns_iperf3 lac --get-server-output \
+                     --json --logfile $iperf_logfile \
+                     -4 -Z -t 3 -B 172.16.101.1 -c 172.16.101.2
+    else
+        # TCP IPv6
+        netns_iperf3 lns -6 -s -1 --logfile /dev/null -B fc00:101::2 &
+        wait_iperf lns fc00:101::2
+        netns_iperf3 lac --get-server-output \
+                     --json --logfile $iperf_logfile \
+                     -6 -Z -t 3 -B fc00:101::1 -c fc00:101::2
+    fi
+    cat $iperf_logfile | jq '.server_output_json.intervals | first | .sum.bits_per_second' > data_perf_check.txt
+}
+
 # $1 -- socket family
 # $2 -- encap
 # $3 -- pwtype
@@ -692,6 +835,12 @@ show_usage()
             and uses the ping utility to exercise the session datapath.  The test validates
             that large and small packets are successfully transmitted.
 
+            datapath_perf <l2tp version> <socket family> <encap> <pwtype>
+
+            e.g.  datapath_perf 3 inet udp eth
+
+            Runs performance test using iperf3.
+
             cookie_mismatch <socket family> <encap> <pwtype> <cookie length> <bad cookie length>
 
             e.g.  cookie_mismatch inet udp eth 4 4
@@ -753,6 +902,7 @@ test $OPT_VERBOSE -eq 0 && {
 
 case $mode in
     datapath) test_datapath $args ;;
+    datapath_perf) test_datapath_perf $args ;;
     cookie_mismatch) test_cookie_mismatch $args ;;
     data_shutdown) test_data_shutdown $args ;;
     ac_pppoe) test_ac_pppoe $args ;;
