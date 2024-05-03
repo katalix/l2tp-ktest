@@ -298,6 +298,21 @@ data_shutdown_check()
 # $1 -- L2TP version
 # $2 -- family
 # $3 -- encap
+# $4 -- pseudowire
+# $5 -- create extra tunnels or sessions
+data_perf_check()
+{
+    local rate
+    local opts=""
+    test $VERBOSE -eq 1 && opts="$opts -v"
+    check $(dirname $0)/netns_datapath $opts datapath_perf $@
+    rate=$(cat data_perf_check.txt | numfmt --to=si)
+    echo "l2tpv${1} $2 $3 $4 $5: ${rate}bps"
+}
+
+# $1 -- L2TP version
+# $2 -- family
+# $3 -- encap
 ac_pppoe_data_check()
 {
     local opts=""
@@ -654,6 +669,26 @@ then
             fi
         fi
     fi
+
+    tc_data_perf_v2_inet_udp_ppp() { data_perf_check 2 inet udp ppp; }
+    tc_data_perf_v3_inet_udp_ppp() { data_perf_check 3 inet udp ppp; }
+    tc_data_perf_v3_inet_udp_eth() { data_perf_check 3 inet udp eth; }
+    tc_data_perf_v3_inet_ip_eth() { data_perf_check 3 inet ip eth; }
+    tc_data_perf_v2_inet_udp_ppp_tunnels() { data_perf_check 2 inet udp ppp tunnels; }
+    tc_data_perf_v3_inet_udp_eth_tunnels() { data_perf_check 3 inet udp eth tunnels; }
+    tc_data_perf_v3_inet_ip_eth_tunnels() { data_perf_check 3 inet ip eth tunnels; }
+    tc_data_perf_v3_inet_udp_eth_sessions() { data_perf_check 3 inet udp eth sessions; }
+    tc_data_perf_v3_inet_ip_eth_sessions() { data_perf_check 3 inet ip eth sessions; }
+    tc_data_perf_v3_inet_udp_eth_both() { data_perf_check 3 inet udp eth both; }
+    tc_data_perf_v3_inet_ip_eth_both() { data_perf_check 3 inet ip eth both; }
+    if test $HAVE_IPV6_PEER -eq 1
+    then
+        tc_data_perf_v2_inet6_udp_ppp() { data_perf_check 2 inet6 udp ppp; }
+        tc_data_perf_v3_inet6_udp_ppp() { data_perf_check 3 inet6 udp ppp; }
+        tc_data_perf_v3_inet6_udp_eth() { data_perf_check 3 inet6 udp eth; }
+        tc_data_perf_v3_inet6_ip_eth() { data_perf_check 3 inet6 ip eth; }
+    fi
+
 fi
 
 # Tunnel and session ID scope tests
