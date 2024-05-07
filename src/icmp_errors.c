@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <inttypes.h>
 #include <poll.h>
+#include <time.h>
 #include <linux/l2tp.h>
 #include <linux/errqueue.h>
 #include <linux/icmp.h>
