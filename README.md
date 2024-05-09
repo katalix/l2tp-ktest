@@ -69,6 +69,7 @@ The test machine will require:
 * runtime libraries for libnl-3 and libnl-genl-3
 * a version of [iproute2](https://github.com/shemminger/iproute2) supporting the
   l2tp subcommand: most Linux distributions include this by default
+* iperf3, jq and numfmt utilities
 
 You can then run the test suite using the l2tp_ktest bash script.  The script offers
 various options to control what it does: you can see documentation for these by
