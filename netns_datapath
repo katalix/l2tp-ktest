@@ -260,14 +260,12 @@ netns_sess_dataif_pair()
         return 1
     }
 
-    # Wait for interface(s) with the name containing substring "0",
-    # since this will match either "ppp0" or "l2tpeth0".
-    wait_file_contains /tmp/l2tp-ktest-sess-dataif-s 0.1 10 "0" || {
+    wait_file_contains /tmp/l2tp-ktest-sess-dataif-s 0.1 10 "l2tpeth0\|ppp0\|?" || {
         err "Timeout waiting for LNS L2TP session interface"
         return 1
     }
     lns_l2tp_if=$(cut -d " " -f 1 /tmp/l2tp-ktest-sess-dataif-s)
-    wait_file_contains /tmp/l2tp-ktest-sess-dataif-c 0.1 10 "0" || {
+    wait_file_contains /tmp/l2tp-ktest-sess-dataif-c 0.1 10 "l2tpeth0\|ppp0\|?" || {
         err "Timeout waiting for LAC L2TP session interface"
         return 1
     }
