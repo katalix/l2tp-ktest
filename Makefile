@@ -48,7 +48,7 @@ kcreate_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,kcreate))
 
 # sess_dataif
-sess_dataif_SRCS := $(SRCDIR)/sess_dataif.c $(COMMON_SOURCES)
+sess_dataif_SRCS := $(SRCDIR)/sess_dataif.c $(SRCDIR)/vector.c $(COMMON_SOURCES)
 sess_dataif_LIBS := $(COMMON_LIBS)
 $(eval $(call buildapp,sess_dataif))
 

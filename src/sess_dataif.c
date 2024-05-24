@@ -46,43 +46,42 @@
 #include <sys/ioctl.h>
 #include <stdlib.h>
 #include <semaphore.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <ctype.h>
 
 #include "l2tp_netlink.h"
 #include "util.h"
 #include "util_ppp.h"
-
-struct runtime_options {
-    int is_client;
-    int num_tunnels;
-    int num_sessions;
-    int timeout;
-};
-
-struct session_options {
-    struct l2tp_options lo;
-    struct runtime_options ro;
-    struct tunnel_options *to;
-    struct l2tp_pw pw;
-};
+#include "vector.h"
 
 struct tunnel_options {
     struct l2tp_options lo;
-    struct runtime_options ro;
     int tfd;
     int ppptctl;
     struct sockaddr_storage peer_addr;
     socklen_t peer_addr_len;
-    struct session_options *so;
-    size_t err_count, pkt_count;
+    uint32_t index;
+    pthread_t thread;
+    uint32_t session_index;
 };
 
-static sem_t g_running;
-static struct tunnel_options *g_all_tunnel_options = NULL;
-static size_t g_n_tunnel_options = 0;
-static const char *g_status_filename = NULL;
-static FILE *g_status_file = NULL;
+#define MAX_TUNNELS 10000
 
-void show_usage(const char *myname)
+static struct tunnel_options *g_all_tunnels[MAX_TUNNELS];
+static const char *g_status_filename = NULL;
+static const char *g_cmdline_fifo = NULL;
+static FILE *g_status_file = NULL;
+static size_t g_n_tunnels;
+static time_t g_timeout_s;
+static bool g_is_client;
+static sem_t g_running;
+
+static const char *g_cmdline_args = "hCT:v:f:e:p:k:K:P:L:m:N:i:M:F:A:";
+
+static void show_usage(const char *myname)
 {
     printf("Name:     %s\n", myname);
     printf("Desc:     create l2tp sessions in the kernel, ready to pass data.\n");
@@ -92,13 +91,16 @@ void show_usage(const char *myname)
     printf("          Top level operational options:\n");
     printf("\n");
     printf("          -C    run in client mode. The server must already be running.\n");
+    printf("          -T    timeout in seconds. On expiry, all tunnel sockets are closed. Default 0\n");
+    printf("          -F    read subsequent commandlines from named FIFO.\n");
     printf("\n");
     printf("          L2TP protocol control options:\n");
     printf("\n");
-    printf("          -v    specify L2TP version (2 or 3: default is 2)\n");
+    printf("          -A    add pseudowire to specified tunnel index (FIFO command only)\n");
+    printf("          -v    specify L2TP version (2 or 3: default is 0)\n");
     printf("          -f    specify tunnel socket address family (inet or inet6: default is inet)\n");
     printf("          -e    specify tunnel encapsulation (udp or ip: default is udp)\n");
-    printf("          -p    specify session pseudowire type (ppp, pppac, or eth: default ppp)\n");
+    printf("          -p    specify session pseudowire type (ppp, pppac, or eth: default none)\n");
     printf("          -k    local cookie (4 or 8 hex bytes, default no cookie)\n");
     printf("          -K    peer cookie (4 or 8 hex bytes, default no cookie)\n");
     printf("\n");
@@ -107,81 +109,43 @@ void show_usage(const char *myname)
     printf("          -P    specify peer address/port (e.g. -P 192.168.1.12/10000)\n");
     printf("          -L    specify local address/port (e.g. -L 192.168.1.12/20000)\n");
     printf("\n");
-    printf("          Limit specification:\n");
-    printf("\n");
-    printf("          -t    specify number of tunnels to create. Default 1\n");
-    printf("          -s    specify number of sessions to create in each tunnel. Default 1\n");
-    printf("          -T    timeout in seconds. On expiry, all tunnel sockets are closed. Default 0\n");
-    printf("\n");
     printf("          Pseudowire-specific options:\n");
     printf("\n");
     printf("          -N    specify session interface name (eth and pppac pseudowires)\n");
     printf("          -i    specify PPPoE session ID (pppac pseudowire only)\n");
     printf("          -M    specify PPPoE peer MAC address (pppac pseudowire only)\n");
+    printf("          -m    specify MTU\n");
     printf("\n");
 }
 
-static void tunnel_indicate_created(struct tunnel_options *to)
+static void tunnel_indicate_created(const char *path_prefix, uint32_t tid)
 {
     char filename[PATH_MAX];
     FILE *f;
 
-    snprintf(filename, PATH_MAX, "%s-created-%u", g_status_filename, to->lo.tid);
+    snprintf(filename, PATH_MAX, "%s-created-%u", path_prefix, tid);
     f = fopen(filename, "w");
     if (!f) die("unable to write tunnel created indication");
     fclose(f);
 }
 
-static void tunnel_indicate_up(struct tunnel_options *to)
+static void tunnel_indicate_up(const char *path_prefix, uint32_t tid)
 {
     char filename[PATH_MAX];
     FILE *f;
 
-    snprintf(filename, PATH_MAX, "%s-up-%u", g_status_filename, to->lo.tid);
+    snprintf(filename, PATH_MAX, "%s-up-%u", path_prefix, tid);
     f = fopen(filename, "w");
     if (!f) die("unable to write tunnel up indication");
     fclose(f);
 }
 
-static void tunnel_indicate_down(struct tunnel_options *to)
+static void tunnel_indicate_down( const char *path_prefix, uint32_t tid)
 {
     char filename[PATH_MAX];
 
-    snprintf(filename, PATH_MAX, "%s-up-%u", g_status_filename, to->lo.tid);
+    snprintf(filename, PATH_MAX, "%s-up-%u", path_prefix, tid);
     unlink(filename);
-}
-
-/* must be called after the kernel context exists! */
-static void do_create_tunnel(struct tunnel_options *to)
-{
-    assert(to);
-    int ret;
-
-    dbg("tunnel %u -> peer %u\n", to->lo.tid, to->lo.ptid);
-
-    tunnel_indicate_down(to);
-
-    to->tfd = tunnel_socket(to->lo.family, to->lo.protocol, to->lo.tid, &to->lo.local_addr, &to->lo.peer_addr);
-    if (to->tfd < 0) die("Failed to create managed tunnel socket\n");
-
-    ret = kernel_tunnel_create(to->tfd, &to->lo, &to->ppptctl);
-    if (ret) die("Failed to create kernel context for tunnel %u/%u\n", to->lo.tid, to->lo.ptid);
-}
-
-static void do_create_session(struct session_options *so)
-{
-    int ret;
-
-    assert(so);
-
-    dbg("session %u/%u -> peer %u/%u\n", so->lo.tid, so->lo.sid, so->lo.ptid, so->lo.psid);
-
-    ret = kernel_session_create(&so->lo, &so->pw);
-    if (ret) die("Failed to create kernel context for session %u/%u\n", so->lo.tid, so->lo.sid);
-
-    fprintf(g_status_file, "%s %u/%u to %u/%u\n", so->pw.ifname[0] ? so->pw.ifname : "?",
-            so->lo.tid, so->lo.sid, so->lo.ptid, so->lo.psid);
-    fflush(g_status_file);
 }
 
 static void send_ctrl_packet(struct tunnel_options *to)
@@ -206,14 +170,12 @@ static void send_ctrl_packet(struct tunnel_options *to)
     nb = sendto(to->tfd, &pkt, sizeof(pkt), 0, (void*)&to->peer_addr, to->peer_addr_len);
     if (nb > 0) {
         dbg("%s tunl %" PRIu32 "/%" PRIu32 ": sent %d bytes on socket %d\n",
-                to->ro.is_client ? "client" : "server",
+                g_is_client ? "client" : "server",
                 to->lo.tid, to->lo.ptid, (int)nb, to->tfd);
-        to->pkt_count++;
     } else {
         err("%s tunl %" PRIu32 "/%" PRIu32 ": failed to send data on socket %d: %s\n",
-                to->ro.is_client ? "client" : "server",
+                g_is_client ? "client" : "server",
                 to->lo.tid, to->lo.ptid, to->tfd, strerror(errno));
-        to->err_count++;
     }
 }
 
@@ -225,21 +187,19 @@ static void recv_ctrl_packet(struct tunnel_options *to)
     if (nb > 0) {
         struct l2tp_control_hdr_v2 *hdr = (struct l2tp_control_hdr_v2*) buf;
         dbg("%s tunl %" PRIu32 "/%" PRIu32 ": recv %d bytes on socket %d\n",
-                to->ro.is_client ? "client" : "server",
+                g_is_client ? "client" : "server",
                 to->lo.tid, to->lo.ptid, (int)nb, to->tfd);
         dbg("v%d %s frame\n", hdr->ver, hdr->t_bit ? "control" : "data");
         if (opt_debug) mem_dump(buf, nb);
-        to->pkt_count++;
     } else {
         err("tunl %" PRIu32 "/%" PRIu32 ": failed to recv data on socket %d: %s\n",
                 to->lo.tid, to->lo.ptid, to->tfd, strerror(errno));
-        to->err_count++;
     }
 }
 
 static void wait_peer(struct tunnel_options *to)
 {
-    if (to->ro.is_client) {
+    if (g_is_client) {
         send_ctrl_packet(to);
         recv_ctrl_packet(to);
     } else {
@@ -254,36 +214,35 @@ static void on_quit(int sig)
 {
     size_t i;
     signal(sig, SIG_IGN); /* ignore this signal */
-    for (i = 0; i < g_n_tunnel_options; i++) {
-        close(g_all_tunnel_options[i].tfd);
+    for (i = 0; i < g_n_tunnels; i++) {
         sem_post(&g_running);
     }
-    g_n_tunnel_options = 0;
-    g_all_tunnel_options = NULL;
 }
 
 static void *tunnel_thread(void *dptr)
 {
     struct tunnel_options *to = dptr;
 
-    tunnel_indicate_created(to);
+    tunnel_indicate_created(g_status_filename, to->lo.tid);
 
     /* wait for peer */
     wait_peer(to);
-    tunnel_indicate_up(to);
+    tunnel_indicate_up(g_status_filename, to->lo.tid);
 
-    /* now we've seen data, set the kill timer running:
-     * avoid racing around alarm() by only calling this
-     * from the first tunnel thread
+    /* set the kill timer running if required: avoid racing
+     * around alarm() by only calling this from the first
+     * tunnel thread
      */
-    if (to->ro.timeout && to == g_all_tunnel_options) {
+    if (g_timeout_s && to->index == 0) {
         signal(SIGALRM, on_quit);
-        alarm(to->ro.timeout);
+        alarm(g_timeout_s);
     }
 
     sem_wait(&g_running);
 
-    return dptr;
+    close(to->tfd);
+
+    return NULL;
 }
 
 /* In order to avoid clashing UDP addresses, and to keep the client and
@@ -295,82 +254,113 @@ static uint32_t generate_id(uint32_t index, uint32_t seed, bool is_client)
     return seed + (2*index) + (is_client ? 1 : 0);
 }
 
-static void run_tunnels(struct l2tp_options *lo, struct runtime_options *ro)
+static void create_session_1(struct tunnel_options *to)
+{
+    assert(to);
+
+    uint32_t session_index = to->session_index++;
+    uint32_t ptid = to->lo.ptid;
+    uint32_t tid = to->lo.tid;
+    struct l2tp_pw pw = {};
+    uint32_t psid, sid;
+    int ret;
+
+    to->lo.sid = sid = generate_id(0, 1000 + to->lo.tid + session_index, g_is_client);
+    to->lo.psid = psid = generate_id(0, 1000 + to->lo.ptid + session_index, !g_is_client);
+
+    ppp_init(&pw.typ.ppp);
+
+    dbg("%s: create %s pseudowire in tunnel %u: sid %u -> psid %u\n",
+            g_is_client ? "CLIENT" : "SERVER",
+            PWTYPE_STR(to->lo.pseudowire),
+            to->index,
+            sid,
+            psid);
+
+    ret = kernel_session_create(&to->lo, &pw);
+    if (ret) die("Failed to create kernel context for session %u/%u (%d)\n", tid, sid, ret);
+
+    if (g_status_file) {
+        fprintf(g_status_file, "%s %u/%u to %u/%u\n", pw.ifname[0] ? pw.ifname : "?",
+                tid, sid, ptid, psid);
+        fflush(g_status_file);
+    }
+}
+
+static void create_tunnel_1(struct tunnel_options *to)
+{
+    assert(to);
+    int ret;
+
+    dbg("create tunnel %u: v%d, %s %s encap tid %u -> ptid %u\n",
+            to->index,
+            to->lo.l2tp_version,
+            to->lo.family == AF_INET ? "inet" : "inet6",
+            to->lo.protocol == IPPROTO_UDP ? "UDP" : "IP",
+            to->lo.tid,
+            to->lo.ptid);
+
+    ret = tunnel_sk_addr_init(to->lo.family,
+            to->lo.protocol,
+            to->lo.peer_addr.ip,
+            to->lo.peer_addr.port,
+            to->lo.ptid,
+            &to->peer_addr,
+            &to->peer_addr_len);
+    assert(ret == 0);
+
+    tunnel_indicate_down(g_status_filename, to->lo.ptid);
+
+    to->tfd = tunnel_socket(to->lo.family, to->lo.protocol, to->lo.tid, &to->lo.local_addr, &to->lo.peer_addr);
+    if (to->tfd < 0) die("Failed to create managed tunnel socket\n");
+
+    ret = kernel_tunnel_create(to->tfd, &to->lo, &to->ppptctl);
+    if (ret) die("Failed to create kernel context for tunnel %u/%u\n", to->lo.tid, to->lo.ptid);
+}
+
+static struct tunnel_options *create_tunnel(uint32_t index, struct l2tp_options *lo)
 {
     assert(lo);
-    assert(ro);
 
-    pthread_t *threads;
-    struct tunnel_options *tos;
-    struct session_options *sos;
+    struct tunnel_options *to = scalloc(1, sizeof(*to));
     int ret;
-    int t, s, n_tunnels, index = 0;
 
-    n_tunnels = ro->num_tunnels;
-    threads = scalloc(n_tunnels, sizeof(*threads));
-    tos = scalloc(n_tunnels, sizeof(*tos));
-    sos = scalloc(n_tunnels * ro->num_sessions, sizeof(*sos));
+    to->lo = *lo;
+    to->index = index;
 
-    sem_init(&g_running, 0, 0);
+    to->lo.tid = generate_id(index, 1, g_is_client);
+    to->lo.local_addr.port = generate_id(index, to->lo.local_addr.port, g_is_client);
+    to->lo.ptid = generate_id(index, 1, !g_is_client);
+    to->lo.peer_addr.port = generate_id(index, to->lo.peer_addr.port, !g_is_client);
 
-    /* share these globally so the signal handler can access them */
-    if (ro->timeout) {
-        g_all_tunnel_options = tos;
-        g_n_tunnel_options = n_tunnels;
+    create_tunnel_1(to);
+    if (to->lo.pseudowire != L2TP_API_SESSION_PW_TYPEUNSPECIFIED) {
+        create_session_1(to);
     }
 
-    /* configure tunnel options and create tunnel sockets */
-    for (t = 0; t < n_tunnels; t++) {
-        struct tunnel_options *to = &tos[t];
+    ret = pthread_create(&to->thread, NULL, tunnel_thread, to);
+    if (ret) die("thread spawn failed: %s\n", strerror(ret));
 
-        to->lo = *lo;
-        to->ro = *ro;
+    return to;
+}
 
-        to->lo.tid = generate_id(index, 1, to->ro.is_client);
-        to->lo.ptid = generate_id(index, 1, !to->ro.is_client);
-        to->lo.local_addr.port = generate_id(index, to->lo.local_addr.port, to->ro.is_client);
-        to->lo.peer_addr.port = generate_id(index, to->lo.peer_addr.port, !to->ro.is_client);
+static void add_tunnel(struct l2tp_options *lo)
+{
+    assert(g_n_tunnels < MAX_TUNNELS);
+    uint32_t idx = g_n_tunnels++;
+    g_all_tunnels[idx] = create_tunnel(idx, lo);
+}
 
-        ret = tunnel_sk_addr_init(to->lo.family,
-                to->lo.protocol,
-                to->lo.peer_addr.ip,
-                to->lo.peer_addr.port,
-                to->lo.ptid,
-                &to->peer_addr,
-                &to->peer_addr_len);
-        assert(ret == 0);
-
-        to->so = &sos[ro->num_sessions * t];
-        do_create_tunnel(to);
-        for (s = 0; s < ro->num_sessions; s++) {
-            struct session_options *so = to->so + s;
-            so->lo = to->lo;
-            so->ro = to->ro;
-            so->to = to;
-            ppp_init(&so->pw.typ.ppp);
-            so->lo.sid = generate_id(s, 1000*to->lo.tid, so->ro.is_client);
-            so->lo.psid = generate_id(s, 1000*to->lo.ptid, !so->ro.is_client);
-            do_create_session(so);
-        }
-
-        index++;
+static void wait_tunnel(uint32_t idx)
+{
+    assert(idx < MAX_TUNNELS);
+    struct tunnel_options *to = g_all_tunnels[idx];
+    g_all_tunnels[idx] = NULL;
+    if (to) {
+        assert(to->index == idx);
+        pthread_join(to->thread, NULL);
+        free(to);
     }
-
-    /* start tunnel threads */
-    for (t = 0; t < n_tunnels; t++) {
-        struct tunnel_options *to = &tos[t];
-        ret = pthread_create(&threads[t], NULL, tunnel_thread, to);
-        if (ret) die("thread spawn failed: %s\n", strerror(ret));
-    }
-
-    /* wait for tunnel threads to complete */
-    for (t = 0; t < n_tunnels; t++) {
-        ret = pthread_join(threads[t], NULL);
-        if (ret) err("pthread_join: %s\n", strerror(ret));
-    }
-
-    free(tos);
-    free(threads);
 }
 
 static int str_to_cookie(char *s, uint8_t *cookie)
@@ -399,159 +389,289 @@ static int str_to_cookie(char *s, uint8_t *cookie)
     return -EINVAL;
 }
 
-int main(int argc, char **argv)
+static void parse_l2tp_option(const char arg, char *optarg, struct l2tp_options *lo)
 {
-    int opt;
-    int rc;
+    assert(lo);
+    int ret;
 
-    struct l2tp_options lo = {
-        .l2tp_version   = 2,
-        .create_api = L2TP_NETLINK_API,
-        .delete_api = L2TP_NETLINK_API,
-        .family     = AF_INET,
-        .protocol   = IPPROTO_UDP,
-        .pseudowire = L2TP_API_SESSION_PW_TYPE_PPP,
-        .mtu = 1400,
-        .peer_addr.ip = NULL,
-        .local_addr.ip = NULL,
-    };
-    struct runtime_options ro = {
-        .is_client = 0,
-        .num_tunnels = 1,
-        .num_sessions = 1,
-        .timeout = 0,
-    };
-
-    /* Parse commandline, doing basic sanity checking as we go */
-    while ((opt = getopt(argc, argv, "hCv:c:d:f:e:p:P:L:t:s:T:m:k:K:N:i:M:")) != -1) {
-        switch(opt) {
-        case 'h':
-            show_usage(argv[0]);
-            exit(EXIT_SUCCESS);
-        case 'C':
-            ro.is_client = 1;
-            break;
+    switch (arg) {
         case 'v':
-            lo.l2tp_version = atoi(optarg);
-            if (lo.l2tp_version != 3 && lo.l2tp_version != 2)
+            lo->l2tp_version = atoi(optarg);
+            if (lo->l2tp_version != 3 && lo->l2tp_version != 2)
                 die("Invalid l2tp version %s\n", optarg);
             break;
-        case 'c':
-            if (!parse_api(optarg, &lo.create_api))
-                die("Invalid api %s\n", optarg);
-            break;
-        case 'd':
-            if (!parse_api(optarg, &lo.delete_api))
-                die("Invalid api %s\n", optarg);
-            break;
         case 'f':
-            if (!parse_socket_family(optarg, &lo.family))
+            if (!parse_socket_family(optarg, &lo->family))
                 die("Invalid address family %s\n", optarg);
             break;
         case 'e':
-            if (!parse_encap(optarg, &lo.protocol))
+            if (!parse_encap(optarg, &lo->protocol))
                 die("Invalid encapsulation %s\n", optarg);
             break;
         case 'p':
-            if (!parse_pseudowire_type(optarg, &lo.pseudowire))
+            if (!parse_pseudowire_type(optarg, &lo->pseudowire))
                 die("Invalid pseudowire %s\n", optarg);
             break;
         case 'P':
-            if (!parse_address(optarg, &lo.peer_addr))
+            if (!parse_address(optarg, &lo->peer_addr))
                 die("Failed to parse peer address %s\n", optarg);
             break;
         case 'L':
-            if (!parse_address(optarg, &lo.local_addr))
+            if (!parse_address(optarg, &lo->local_addr))
                 die("Failed to parse local address %s\n", optarg);
             break;
-        case 't':
-            ro.num_tunnels = atoi(optarg);
-            break;
-        case 's':
-            ro.num_sessions = atoi(optarg);
-            break;
-        case 'T':
-            ro.timeout = atoi(optarg);
-            break;
         case 'm':
-            lo.mtu = atoi(optarg);
+            lo->mtu = atoi(optarg);
             break;
         case 'k':
-            rc = str_to_cookie(optarg, &lo.cookie[0]);
-            if (rc < 0) {
+            ret = str_to_cookie(optarg, &lo->cookie[0]);
+            if (ret < 0) {
                 die("invalid cookie -- expecting 4 or 8 hex bytes, e.g. 01020304\n");
             }
-            lo.cookie_len = rc;
+            lo->cookie_len = ret;
             break;
         case 'K':
-            rc = str_to_cookie(optarg, &lo.peer_cookie[0]);
-            if (rc < 0) {
+            ret = str_to_cookie(optarg, &lo->peer_cookie[0]);
+            if (ret < 0) {
                 die("invalid cookie -- expecting 4 or 8 hex bytes, e.g. 01020304\n");
             }
-            lo.peer_cookie_len = rc;
+            lo->peer_cookie_len = ret;
             break;
         case 'N':
-            if (strlen(optarg) > sizeof(lo.ifname)-1)
+            if (strlen(optarg) > sizeof(lo->ifname)-1)
                 die("Interface name \"%s\" is too long\n", optarg);
-            memcpy(lo.ifname, optarg, strlen(optarg));
+            memcpy(lo->ifname, optarg, strlen(optarg));
             break;
         case 'i':
-            lo.pw.pppac.id = atoi(optarg);
+            lo->pw.pppac.id = atoi(optarg);
             break;
         case 'M':
             if (6 != sscanf(optarg,
                         "%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8":%2"SCNx8,
-                        &lo.pw.pppac.peer_mac[0],
-                        &lo.pw.pppac.peer_mac[1],
-                        &lo.pw.pppac.peer_mac[2],
-                        &lo.pw.pppac.peer_mac[3],
-                        &lo.pw.pppac.peer_mac[4],
-                        &lo.pw.pppac.peer_mac[5]))
+                        &lo->pw.pppac.peer_mac[0],
+                        &lo->pw.pppac.peer_mac[1],
+                        &lo->pw.pppac.peer_mac[2],
+                        &lo->pw.pppac.peer_mac[3],
+                        &lo->pw.pppac.peer_mac[4],
+                        &lo->pw.pppac.peer_mac[5]))
                 die("Failed to parse MAC address \"%s\"\n", optarg);
             break;
         default:
             die("failed to parse command line args\n");
-        }
     }
+}
 
-    if (!lo.local_addr.ip) lo.local_addr = *gen_dflt_address(lo.family, true);
-    if (!lo.peer_addr.ip) lo.peer_addr = *gen_dflt_address(lo.family, false);
+static void validate_l2tp_options(struct l2tp_options *lo)
+{
+    assert(lo);
 
-    /* Now we've parsed the commandline, sanity check the combinations of
-     * options
-     */
-    if (lo.l2tp_version == 2) {
-        if (lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP
-            && lo.pseudowire != L2TP_API_SESSION_PW_TYPE_PPP_AC)
+    if (!lo->local_addr.ip) lo->local_addr = *gen_dflt_address(lo->family, true);
+    if (!lo->peer_addr.ip) lo->peer_addr = *gen_dflt_address(lo->family, false);
+
+    if (lo->l2tp_version == 2) {
+        if (lo->pseudowire != L2TP_API_SESSION_PW_TYPE_PPP
+            && lo->pseudowire != L2TP_API_SESSION_PW_TYPE_PPP_AC)
             die("L2TPv2 code supports PPP or PPPAC pseudowires only\n");
-        if (lo.protocol != IPPROTO_UDP)
+        if (lo->protocol != IPPROTO_UDP)
             die("L2TPv2 code supports UDP encapsulation only\n");
     }
-    if (lo.l2tp_version == 3) {
-        if (lo.create_api == L2TP_SOCKET_API &&
-            lo.pseudowire == L2TP_API_SESSION_PW_TYPE_ETH)
+    if (lo->l2tp_version == 3) {
+        if (lo->create_api == L2TP_SOCKET_API &&
+            lo->pseudowire == L2TP_API_SESSION_PW_TYPE_ETH)
             die("L2TPv3 code doesn't support ETH pw create using the socket API\n");
     }
-    if (lo.mtu < 256 || lo.mtu > 1500) {
+    if (lo->mtu < 256 || lo->mtu > 1500) {
         die("mtu out of range\n");
     }
+}
 
-    g_status_filename = ro.is_client ? "/tmp/l2tp-ktest-sess-dataif-c" : "/tmp/l2tp-ktest-sess-dataif-s";
+static void parse_cmdline_args(int nargs, char **args, struct l2tp_options *lo)
+{
+    int opt;
+
+    optind = 1;
+
+    while ((opt = getopt(nargs, args, g_cmdline_args)) != -1) {
+        switch(opt) {
+        case 'h':
+            show_usage(args[0]);
+            exit(EXIT_SUCCESS);
+        case 'C':
+            g_is_client = true;
+            break;
+        case 'T':
+            g_timeout_s = atoi(optarg);
+            break;
+        case 'F':
+            g_cmdline_fifo = optarg;
+            break;
+        default:
+            parse_l2tp_option(opt, optarg, lo);
+        }
+    }
+}
+
+static void parse_fifo_args(int nargs, char **args, struct l2tp_options *lo, int *add_idx)
+{
+    int opt;
+
+    optind = 1;
+
+    while ((opt = getopt(nargs, args, g_cmdline_args)) != -1) {
+        switch (opt) {
+        case 'A':
+            *add_idx = atoi(optarg);
+            break;
+        default:
+            parse_l2tp_option(opt, optarg, lo);
+        }
+    }
+}
+
+static char *rstrip(char *s)
+{
+    size_t l = strlen(s) - 1;
+    while (l) {
+        if (isspace(s[l])) s[l--] = '\0';
+        else break;
+    }
+    return s;
+}
+
+static void handle_fifo_command(char *argv0, char *cmd, struct l2tp_options *dflt_lo)
+{
+    assert(argv0);
+    assert(cmd);
+    assert(dflt_lo);
+
+    struct l2tp_options lo = *dflt_lo;
+    int add_tunnel_idx = -1;
+    char *args[64] = {};
+    size_t nargs = 0;
+    char *tok;
+
+    args[nargs++] = argv0;
+
+    tok = strtok(cmd, " ");
+    if (!tok)
+        return;
+
+    args[nargs++] = tok;
+
+    while ((tok = strtok(NULL, " "))) {
+        assert(nargs < sizeof(args)/sizeof(args[0]));
+        args[nargs++] = rstrip(tok);
+    }
+
+    parse_fifo_args(nargs, args, &lo, &add_tunnel_idx);
+
+    if (add_tunnel_idx >= 0 && lo.pseudowire != L2TP_API_SESSION_PW_TYPEUNSPECIFIED) {
+        if (add_tunnel_idx < g_n_tunnels) {
+            struct tunnel_options *to = g_all_tunnels[add_tunnel_idx];
+            lo.l2tp_version = to->lo.l2tp_version;
+            lo.create_api = to->lo.create_api;
+            lo.delete_api = to->lo.delete_api;
+            lo.family = to->lo.family;
+            lo.protocol = to->lo.protocol;
+            lo.tid = to->lo.tid;
+            lo.ptid = to->lo.ptid;
+            to->lo = lo;
+            create_session_1(to);
+        }
+    } else {
+        add_tunnel(&lo);
+    }
+}
+
+static void handle_fifo_commands(char *argv0, int fd, struct l2tp_options *dflt_lo)
+{
+    assert(argv0);
+    assert(fd >= 0);
+    assert(dflt_lo);
+
+    struct vector buf = {};
+
+    while (true) {
+        struct pollfd fds[1] = {
+            { .fd = fd, .events = POLLIN }
+        };
+        char *cmdline;
+        int ret;
+
+        ret = poll(fds, 1, 100);
+        if (ret < 0) break;
+        if (ret > 0) {
+            char tmp[1024] = {};
+            ssize_t nb;
+            nb = read(fd, tmp, sizeof(tmp));
+            if (nb < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    continue;
+                else
+                    break;
+            }
+            if (nb) vector_append(&buf, tmp, nb);
+            while ((cmdline = vector_gets(&buf)))
+            {
+                handle_fifo_command(argv0, cmdline, dflt_lo);
+                free(cmdline);
+            }
+            if (!nb) break;
+        }
+    }
+}
+
+int main(int argc, char **argv)
+{
+    struct l2tp_options lo = {
+        .l2tp_version   = 0,
+        .create_api = L2TP_NETLINK_API,
+        .delete_api = L2TP_NETLINK_API,
+        .family     = AF_INET,
+        .protocol   = IPPROTO_UDP,
+        .pseudowire = L2TP_API_SESSION_PW_TYPEUNSPECIFIED,
+        .mtu = 1400,
+        .peer_addr.ip = NULL,
+        .local_addr.ip = NULL,
+    };
+    int cmd_fd = -1;
+    size_t i;
+
+    parse_cmdline_args(argc, argv, &lo);
+    validate_l2tp_options(&lo);
+
+    g_status_filename = g_is_client ? "/tmp/l2tp-ktest-sess-dataif-c" : "/tmp/l2tp-ktest-sess-dataif-s";
     g_status_file = fopen(g_status_filename, "w");
     if (!g_status_file) die("unable to open status file: %s\n", g_status_filename);
 
-    log("%s : v%d, %s/%s (create/delete API), %s encap, %s, %s pseudowire\n",
-        ro.is_client ? "CLIENT" : "SERVER",
-        lo.l2tp_version,
-        lo.create_api == L2TP_SOCKET_API ? "socket" : "netlink",
-        lo.delete_api == L2TP_SOCKET_API ? "socket" : "netlink",
-        lo.protocol == IPPROTO_UDP ? "UDP" : "IP",
-        lo.family == AF_INET ? "inet" : "inet6",
-        PWTYPE_STR(lo.pseudowire));
+    log("sess_dataif %s\n", g_is_client ? "CLIENT" : "SERVER");
 
-    run_tunnels(&lo, &ro);
+    sem_init(&g_running, 0, 0);
+
+    if (lo.l2tp_version)
+        add_tunnel(&lo);
+
+    if (g_cmdline_fifo) {
+
+        unlink(g_cmdline_fifo);
+
+        if (0 != mkfifo(g_cmdline_fifo, 0755))
+            die("failed to create fifo '%s': %s\n", g_cmdline_fifo, strerror(errno));
+
+        cmd_fd = open(g_cmdline_fifo, O_RDONLY|O_NONBLOCK);
+        if (cmd_fd < 0)
+            die("failed to open command fifo: %s\n", strerror(errno));
+
+        handle_fifo_commands(argv[0], cmd_fd, &lo);
+    }
+
+    for (i = 0; i < g_n_tunnels; i++)
+        wait_tunnel(i);
+
     if (g_status_file) fclose(g_status_file);
     if (g_status_filename) unlink(g_status_filename);
+    if (cmd_fd >= 0) close(cmd_fd);
+    if (g_cmdline_fifo) unlink(g_cmdline_fifo);
 
     return 0;
 }
