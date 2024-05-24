@@ -3,29 +3,48 @@
  *
  * @file sess_dataif.c
  *
- * Create L2TP session network interfaces.
+ * Create L2TP tunnel and session instances, including a minimal
+ * control plane.
  *
  * Two instances of the application must be started, one a server and
  * the other a client.
  *
  * Depending on command line arguments, L2TPv2 or v3 tunnel(s) are
- * created using UDP or L2TPIP, and may be created using netlink or
- * the L2TPv2 socket-based API.  Each tunnel runs in its own thread,
- * and creates a number of sessions (each in their own thread). Each
- * session configures its network interface ready for datapath
- * testing. No data packets are sent or received by this app.
+ * created using UDP or L2TPIP, and sessions may be created inside
+ * the tunnels.
+ *
+ * One tunnel/session may be created on initial startup, and an
+ * arbitrary number of further tunnels/sessions created by writing extra
+ * sets of commandline arguments to a fifo.
+ *
+ * Runtime information about tunnel and session bringup is written
+ * to status files located in /tmp:
+ *
+ *  - l2tp-ktest-sess-dataif-[cs] contains status for the client
+ *    and server process respectively.
+ *
+ *    The status file is appended each time a session is created in the
+ *    kernel, containing the following information:
+ *
+ *      <ifname> <tid>/<sid> to <peer tid>/<peer sid>
+ *
+ *  - l2tp-ktest-sess-dataif-[cs]-created-<tid>
+ *
+ *    Generated when the tunnel with ID <tid> is created in the kernel.
+ *
+ *  - l2tp-ktest-sess-dataif-[cs]-up-<tid>
+ *
+ *    Generated when the tunnel with ID <tid> is marked "up", which
+ *    occurs after a simple control packet handshake has occurred.
+ *
+ *    The control packet is useful for exercising the L2TPIP socket types,
+ *    which are part of the kernel L2TP subsystem.
+ *
+ * The status files may be used by test scripts to synchronise test
+ * operations with kernel state.
  *
  * To test unexpected cleanup scenarios it's possible to close all the
  * tunnel sockets after a configurable timeout.
- *
- * This app creates 1 thread per tunnel and 1 thread per session. To
- * extend system process thread limits:
- *
- * ulimit -s  256
- * ulimit -i  120000
- * echo 120000 > /proc/sys/kernel/threads-max
- * echo 600000 > /proc/sys/vm/max_map_count
- * echo 200000 > /proc/sys/kernel/pid_max
  */
 
 #include <assert.h>
