@@ -310,11 +310,11 @@ possibly_create_extra_tunnels()
 
     if test "$3" = "inet"
     then
-        peer_addr=172.16.1.1
-        our_addr=172.16.1.2
+        peer_addr=10.1.1.1
+        our_addr=10.1.2.1
     else
-        peer_addr=fc00:1::1
-        our_addr=fc00:1::2
+        peer_addr=2001:db8:1::1
+        our_addr=2001:db8:2::1
     fi
     dport=8000
     sport=8000
