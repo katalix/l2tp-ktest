@@ -84,6 +84,7 @@ check()
         err "$@ failed on line ${BASH_LINENO[0]} in ${FUNCNAME[1]}"
         CHECK_FAIL=$((CHECK_FAIL+1))
         test $EXIT_ON_FIRST_ERROR -eq 0 || report_and_exit $ntests $CHECK_COUNT 1 1
+        false
     fi
 }
 
@@ -305,9 +306,11 @@ data_perf_check()
     local rate
     local opts=""
     test $VERBOSE -eq 1 && opts="$opts -v"
-    check $(dirname $0)/netns_datapath $opts datapath_perf $@
-    rate=$(cat data_perf_check.txt | numfmt --to=si)
-    echo "l2tpv${1} $2 $3 $4 $5: ${rate}bps"
+    if check $(dirname $0)/netns_datapath $opts datapath_perf $@
+    then
+        rate=$(cat data_perf_check.txt | numfmt --to=si)
+        echo "l2tpv${1} $2 $3 $4 $5: ${rate}bps"
+    fi
 }
 
 # $1 -- L2TP version
