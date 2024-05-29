@@ -300,6 +300,8 @@ possibly_create_extra_tunnels()
 {
     test "$1" = "lns" || return
 
+    wait_file_exists /tmp/l2tp-ktest-sess-dataif-s 0.5 10
+
     from=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f2)
     to=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f4)
 
@@ -326,7 +328,8 @@ possibly_create_extra_tunnels()
         ip -netns lns l2tp add tunnel \
            local $our_addr remote $peer_addr encap $4 \
            udp_sport $sport udp_dport $dport \
-           tunnel_id $tid1 peer_tunnel_id $tid2
+           tunnel_id $tid1 peer_tunnel_id $tid2 \
+           || return 1
     done
 }
 # Create extra sessions in the same tunnel that sess_dataif created
@@ -334,6 +337,8 @@ possibly_create_extra_tunnels()
 possibly_create_extra_sessions()
 {
     test "$1" = "lns" || return
+
+    wait_file_exists /tmp/l2tp-ktest-sess-dataif-s 0.5 10
 
     from=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f2)
     to=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f4)
@@ -349,7 +354,8 @@ possibly_create_extra_sessions()
         sid1=$((sid1+1))
         sid2=$((sid2+1))
         ip -netns lns l2tp add session \
-           tunnel_id $tid1 session_id $sid1 peer_session_id $sid2
+           tunnel_id $tid1 session_id $sid1 peer_session_id $sid2 \
+           || return 1
     done
 }
 
@@ -629,14 +635,14 @@ test_datapath_perf()
     # Create extra tunnels and/or sessions
     case "$extra" in
         "tunnels")
-            possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
+            check possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
             ;;
         "sessions")
-            possibly_create_extra_sessions lns
+            check possibly_create_extra_sessions lns
             ;;
         "both")
-            possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
-            possibly_create_extra_sessions lns
+            check possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
+            check possibly_create_extra_sessions lns
             ;;
         "")
             ;;
