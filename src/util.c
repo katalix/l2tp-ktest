@@ -20,6 +20,8 @@
 #include <pthread.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #define aligned_u64 __aligned_u64
 #include <linux/l2tp.h>
@@ -390,6 +392,7 @@ int tunnel_socket(int family, int protocol, uint32_t tid, struct addr *local, st
     assert(protocol == IPPROTO_UDP || protocol == IPPROTO_L2TP);
     if (protocol == IPPROTO_L2TP && local) assert(tid);
 
+    bool hit_emfile = false;
     int fd = -1, ret = 0;
 
     dbg("%s: managed %s %s tunnel socket local %s/%d -> peer %s/%d\n",
@@ -401,8 +404,25 @@ int tunnel_socket(int family, int protocol, uint32_t tid, struct addr *local, st
             peer && peer->ip ? peer->ip : "???",
             peer && peer->ip ? peer->port : 0);
 
+again:
     fd = socket(family, SOCK_DGRAM, protocol);
     if (fd < 0) {
+        if (errno == EMFILE && !hit_emfile) {
+            struct rlimit limit = {};
+            hit_emfile = true;
+            if (0 == getrlimit(RLIMIT_NOFILE, &limit)) {
+                limit.rlim_cur *= 2;
+                if (limit.rlim_cur > limit.rlim_max)
+                    limit.rlim_max = limit.rlim_cur;
+                if (0 != setrlimit(RLIMIT_NOFILE, &limit))
+                    err("%s: failed to update RLIMIT_NOFILE(%ju, %ju): %s\n",
+                            __func__,
+                            (intmax_t)limit.rlim_cur,
+                            (intmax_t)limit.rlim_max,
+                            strerror(errno));
+                goto again;
+            }
+        }
         ret = -errno;
         err("%s: failed to create %s %s socket: %s\n",
                 __func__,
