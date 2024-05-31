@@ -852,6 +852,8 @@ bool parse_pseudowire_type(char *str, enum l2tp_api_session_pw_type *pwtype)
         *pwtype = L2TP_API_SESSION_PW_TYPE_ETH;
     else if (0 == strcmp("pppac", str))
         *pwtype = L2TP_API_SESSION_PW_TYPE_PPP_AC;
+    else if (0 == strcmp("none", str))
+        *pwtype = L2TP_API_SESSION_PW_TYPEUNSPECIFIED;
     else
         return false;
     return true;
