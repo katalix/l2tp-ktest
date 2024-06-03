@@ -86,6 +86,62 @@ netns_get_stats()
         | grep "^.x.*pkts/bytes/errors" | grep -o '.x [0-9]\+/[0-9]\+/[0-9]\+' | tr '/' ' '
 }
 
+# $1 -- indicator file
+wait_sess_dataif_session()
+{
+    wait_file_exists $1 0.1 20 || {
+        err "Timeout waiting for $1"
+        return 1
+    }
+    wait_file_contains $1 0.1 10 "l2tpeth0\|ppp0\|?" || {
+        err "Timeout waiting for L2TP session interface in $1"
+        return 1
+    }
+}
+
+# $1 -- index
+sess_dataif_get_lns_tid()
+{
+    wait_sess_dataif_session /tmp/l2tp-ktest-sess-dataif-s && \
+        head -n $1 /tmp/l2tp-ktest-sess-dataif-s | tail -n1 | cut -d" " -f2 | cut -d/ -f1
+}
+
+# $1 -- index
+sess_dataif_get_lns_sid()
+{
+    wait_sess_dataif_session /tmp/l2tp-ktest-sess-dataif-s && \
+        head -n $1 /tmp/l2tp-ktest-sess-dataif-s | tail -n1 | cut -d" " -f2 | cut -d/ -f2
+}
+
+# $1 -- index
+sess_dataif_get_lac_tid()
+{
+    wait_sess_dataif_session /tmp/l2tp-ktest-sess-dataif-s && \
+        head -n $1 /tmp/l2tp-ktest-sess-dataif-s | tail -n1 | cut -d" " -f4 | cut -d/ -f1
+}
+
+# $1 -- index
+sess_dataif_get_lac_sid()
+{
+    wait_sess_dataif_session /tmp/l2tp-ktest-sess-dataif-s && \
+        head -n $1 /tmp/l2tp-ktest-sess-dataif-s | tail -n1 | cut -d" " -f4 | cut -d/ -f2
+}
+
+# $1 -- index
+sess_dataif_get_lns_ifname()
+{
+    wait_sess_dataif_session /tmp/l2tp-ktest-sess-dataif-s && \
+        head -n $1 /tmp/l2tp-ktest-sess-dataif-s | tail -n1 | cut -d " " -f 1
+}
+
+# $1 -- index
+sess_dataif_get_lac_ifname()
+{
+    wait_sess_dataif_session /tmp/l2tp-ktest-sess-dataif-c && \
+        head -n $1 /tmp/l2tp-ktest-sess-dataif-c | tail -n1 | cut -d " " -f 1
+}
+
+
 # $1 -- namespace
 # $2 -- address
 # $3 -- source port
@@ -264,12 +320,12 @@ netns_sess_dataif_pair()
         err "Timeout waiting for LNS L2TP session interface"
         return 1
     }
-    lns_l2tp_if=$(cut -d " " -f 1 /tmp/l2tp-ktest-sess-dataif-s)
+    lns_l2tp_if=$(sess_dataif_get_lns_ifname 1)
     wait_file_contains /tmp/l2tp-ktest-sess-dataif-c 0.1 10 "l2tpeth0\|ppp0\|?" || {
         err "Timeout waiting for LAC L2TP session interface"
         return 1
     }
-    lac_l2tp_if=$(cut -d " " -f 1 /tmp/l2tp-ktest-sess-dataif-c)
+    lac_l2tp_if=$(sess_dataif_get_lac_ifname 1)
 
     # If we don't have l2tp interface addresses, skip address and route setup
     test -z "$lns_l2tp_addr" && test -z "$lac_l2tp_addr" && return
@@ -302,11 +358,8 @@ possibly_create_extra_tunnels()
 
     wait_file_exists /tmp/l2tp-ktest-sess-dataif-s 0.5 10
 
-    from=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f2)
-    to=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f4)
-
-    tid1=$(echo $from | cut -d/ -f1)
-    tid2=$(echo $to | cut -d/ -f1)
+    tid1=$(sess_dataif_get_lns_tid 1)
+    tid2=$(sess_dataif_get_lac_tid 1)
 
     if test "$3" = "inet"
     then
@@ -340,14 +393,9 @@ possibly_create_extra_sessions()
 
     wait_file_exists /tmp/l2tp-ktest-sess-dataif-s 0.5 10
 
-    from=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f2)
-    to=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f4)
-
-    tid1=$(echo $from | cut -d/ -f1)
-    sid1=$(echo $from | cut -d/ -f2)
-
-    tid2=$(echo $to | cut -d/ -f1)
-    sid2=$(echo $to | cut -d/ -f2)
+    tid1=$(sess_dataif_get_lns_tid 1)
+    sid1=$(sess_dataif_get_lns_sid 1)
+    sid2=$(sess_dataif_get_lac_sid 1)
 
     for n in `seq 1 5000`
     do
@@ -550,9 +598,13 @@ test_datapath()
     local lns_args
     local lac_args
 
+    local lac_tid
+    local lac_sid
     local lac_stats_pre
     local lac_stats_post
     local lac_stats_delta
+    local lns_tid
+    local lns_sid
     local lns_stats_pre
     local lns_stats_post
     local lns_stats_delta
@@ -574,11 +626,19 @@ test_datapath()
     # that drop off before gathering pre-ping stats.
     sleep 2
 
-    lns_stats_pre=$(netns_get_stats lns 1 1000)
+    lns_tid=$(sess_dataif_get_lns_tid 1)
+    check test -n "$lns_tid"
+    lns_sid=$(sess_dataif_get_lns_sid 1)
+    check test -n "$lns_sid"
+    lns_stats_pre=$(netns_get_stats lns $lns_tid $lns_sid)
     check test $? -eq 0
     test -n "$lns_stats_pre" || check false
 
-    lac_stats_pre=$(netns_get_stats lac 2 2001)
+    lac_tid=$(sess_dataif_get_lac_tid 1)
+    check test -n "$lac_tid"
+    lac_sid=$(sess_dataif_get_lac_sid 1)
+    check test -n "$lac_sid"
+    lac_stats_pre=$(netns_get_stats lac $lac_tid $lac_sid)
     check test $? -eq 0
     test -n "$lac_stats_pre" || check false
 
@@ -591,11 +651,11 @@ test_datapath()
         check netns_ping lac -c1 -w1 -s 1600 -I fc00:101::1 fc00:101::2
     fi
 
-    lns_stats_post=$(netns_get_stats lns 1 1000)
+    lns_stats_post=$(netns_get_stats lns $lns_tid $lns_sid)
     check test $? -eq 0
     test -n "$lns_stats_post" || check false
 
-    lac_stats_post=$(netns_get_stats lac 2 2001)
+    lac_stats_post=$(netns_get_stats lac $lac_tid $lac_sid)
     check test $? -eq 0
     test -n "$lac_stats_post" || check false
 
@@ -782,6 +842,10 @@ test_ac_pppoe()
     local lac_mac
     local lac_stats
     local lns_stats
+    local lac_tid
+    local lac_sid
+    local lns_tid
+    local lns_sid
 
     four_host_setup "$l2tp_version" "$family" "$encap" ""
 
@@ -790,12 +854,21 @@ test_ac_pppoe()
     # When we fire off a pppoe session packet at the lac eth0 from the
     # pppoe namespace, we expect that data to be transmitted over the tunnel.
     lac_mac=$(ip -netns lac link show eth0 | awk '/ether/ { print $2}')
-    lns_l2tp_if=$(cut -d " " -f 1 /tmp/l2tp-ktest-sess-dataif-s)
+    lns_l2tp_if=$(sess_dataif_get_lns_ifname 1)
     ip -netns lns link set dev $lns_l2tp_if up
     check ip netns exec pppoe ./pppoe_sess_pkt -m $lac_mac -i 1234 eth0 < <( dd if=/dev/urandom bs=512 count=1 )
 
-    lns_stats="$(netns_get_stats lns 1 1000)"
-    lac_stats="$(netns_get_stats lac 2 2001)"
+    lac_tid=$(sess_dataif_get_lac_tid 1)
+    check test -n "$lac_tid"
+    lac_sid=$(sess_dataif_get_lac_sid 1)
+    check test -n "$lac_sid"
+    lns_tid=$(sess_dataif_get_lns_tid 1)
+    check test -n "$lns_tid"
+    lns_sid=$(sess_dataif_get_lns_sid 1)
+    check test -n "$lns_sid"
+
+    lns_stats="$(netns_get_stats lns $lns_tid $lns_sid)"
+    lac_stats="$(netns_get_stats lac $lac_tid $lac_sid)"
 
     # We expect lns to receive everything lac sent
     check diff -u <( echo "$lac_stats" | grep ^tx | cut -c4- ) \
