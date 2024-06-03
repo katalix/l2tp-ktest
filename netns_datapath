@@ -58,6 +58,52 @@ wait_file_exists()
     false
 }
 
+# $1 -- namespace
+# $2 -- tunnel count
+# $3 -- sample interval
+# $4 -- max number of checks to perform
+wait_netns_tunnels_exist()
+{
+    local ns="$1"
+    local count="$2"
+    local interval="$3"
+    local max_polls="$4"
+    local tunnel_count
+    local n
+    for n in $(seq 0 $max_polls)
+    do
+        tunnel_count=$(ip -netns $ns l2tp show tunnel | grep -c ^Tunnel)
+        test $tunnel_count -ge $count && return
+        sleep $interval
+    done
+    err "Expected to see $count tunnels in namespace $ns, but saw $tunnel_count"
+    false
+}
+
+# $1 -- namespace
+# $2 -- tunnel ID
+# $3 -- session count
+# $4 -- sample interval
+# $5 -- max number of checks to perform
+wait_netns_sessions_exist()
+{
+    local ns="$1"
+    local tid="$2"
+    local count="$3"
+    local interval="$4"
+    local max_polls="$5"
+    local session_count
+    local n
+    for n in $(seq 0 $max_polls)
+    do
+        session_count=$(ip -netns $ns l2tp show session | grep -e " in tunnel $tid" | grep -c ^Session)
+        test $session_count -ge $count && return
+        sleep $interval
+    done
+    err "Expected to see $count sessions in namespace $ns, but saw $session_count"
+    false
+}
+
 #
 # Network namespace helpers
 #
@@ -348,63 +394,78 @@ netns_sess_dataif_pair()
 }
 
 # Create extra tunnels
-# $1 -- netns
-# $2 -- l2tp version
-# $3 -- socket family
-# $4 -- encap
-possibly_create_extra_tunnels()
+# $1 -- lns sess dataif command file
+# $2 -- lac sess dataif command file
+# $3 -- number of tunnels
+# $4 -- l2tp version
+# $5 -- socket family
+# $6 -- encap
+netns_add_sess_dataif_tunnels()
 {
-    test "$1" = "lns" || return
+    local lns_cmd_out="$1"
+    local lac_cmd_out="$2"
+    local tunnel_count="$3"
+    local version="$4"
+    local family="$5"
+    local encap="$6"
+    local lns_addr
+    local lac_addr
+    local n
 
-    wait_file_exists /tmp/l2tp-ktest-sess-dataif-s 0.5 10
+    case "$family" in
+        "inet")
+            lns_addr=10.1.2.1
+            lac_addr=10.1.1.1
+            ;;
+        "inet6")
+            lns_addr=2001:db8:2::1
+            lac_addr=2001:db8:1::1
+            ;;
+    esac
 
-    tid1=$(sess_dataif_get_lns_tid 1)
-    tid2=$(sess_dataif_get_lac_tid 1)
+    (
+        for n in $(seq 0 $tunnel_count)
+        do
+            echo "-L $lns_addr/1701 -P $lac_addr/1701 -v $version -f $family -e $encap -p none"
+        done
+    ) >> $lns_cmd_out
 
-    if test "$3" = "inet"
-    then
-        peer_addr=10.1.1.1
-        our_addr=10.1.2.1
-    else
-        peer_addr=2001:db8:1::1
-        our_addr=2001:db8:2::1
-    fi
-    dport=8000
-    sport=8000
-
-    for n in `seq 1 5000`
-    do
-        tid1=$((tid1+1))
-        tid2=$((tid2+1))
-        sport=$((sport+1))
-        dport=$((dport+1))
-        ip -netns lns l2tp add tunnel \
-           local $our_addr remote $peer_addr encap $4 \
-           udp_sport $sport udp_dport $dport \
-           tunnel_id $tid1 peer_tunnel_id $tid2 \
-           || return 1
-    done
+    (
+        for n in $(seq 0 $tunnel_count)
+        do
+            echo "-L $lac_addr/1701 -P $lns_addr/1701 -v $version -f $family -e $encap -p none"
+        done
+    ) >> $lac_cmd_out
 }
-# Create extra sessions in the same tunnel that sess_dataif created
-# $1 - netns
-possibly_create_extra_sessions()
+
+# Create extra sessions
+# $1 -- lns sess dataif command file
+# $2 -- lac sess dataif command file
+# $3 -- parent tunnel index
+# $4 -- number of sessions
+# $5 -- pseudowire
+netns_add_sess_dataif_sessions()
 {
-    test "$1" = "lns" || return
+    local lns_cmd_out="$1"
+    local lac_cmd_out="$2"
+    local parent_tunnel="$3"
+    local session_count="$4"
+    local pwtype="$5"
+    local n
 
-    wait_file_exists /tmp/l2tp-ktest-sess-dataif-s 0.5 10
+    (
+        for n in $(seq 0 $session_count)
+        do
+            echo "-A $parent_tunnel -p $pwtype"
+        done
+    ) >> $lns_cmd_out
 
-    tid1=$(sess_dataif_get_lns_tid 1)
-    sid1=$(sess_dataif_get_lns_sid 1)
-    sid2=$(sess_dataif_get_lac_sid 1)
-
-    for n in `seq 1 5000`
-    do
-        sid1=$((sid1+1))
-        sid2=$((sid2+1))
-        ip -netns lns l2tp add session \
-           tunnel_id $tid1 session_id $sid1 peer_session_id $sid2 \
-           || return 1
-    done
+    (
+        for n in $(seq 0 $session_count)
+        do
+            echo "-A $parent_tunnel -p $pwtype"
+        done
+    ) >> $lac_cmd_out
 }
 
 ###############################################################################
@@ -689,24 +750,75 @@ test_datapath_perf()
     local pwtype="$4"
     local extra="$5"
     local iperf_logfile="../test-iperf-l2tpv${l2tp_version}-${family}-${encap}-${pwtype}.log"
+    local lns_sess_dataif_extra_args=""
+    local lac_sess_dataif_extra_args=""
+    local lns_cmd_out="/tmp/lns_sess_dataif_cmds"
+    local lac_cmd_out="/tmp/lac_sess_dataif_cmds"
+    local lns_fifo="/tmp/lns_sess_dataif_fifo"
+    local lac_fifo="/tmp/lac_sess_dataif_fifo"
+    local extra_tunnels=5000
+    local lns_tid
+    local lac_tid
 
-    three_host_setup "$l2tp_version" "$family" "$encap" "$pwtype"
+    rm -f $lns_cmd_out $lac_cmd_out
+
+    if test -n "$extra"
+    then
+        lns_sess_dataif_extra_args="-F $lns_fifo"
+        lac_sess_dataif_extra_args="-F $lac_fifo"
+        ulimit -n $((extra_tunnels*2))
+    fi
+
+    three_host_setup "$l2tp_version" \
+        "$family" \
+        "$encap" \
+        "$pwtype" \
+        "$lns_sess_dataif_extra_args" \
+        "$lac_sess_dataif_extra_args"
 
     # Create extra tunnels and/or sessions
-    case "$extra" in
-        "tunnels")
-            check possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
-            ;;
-        "sessions")
-            check possibly_create_extra_sessions lns
-            ;;
-        "both")
-            check possibly_create_extra_tunnels lns "$l2tp_version" "$family" "$encap"
-            check possibly_create_extra_sessions lns
-            ;;
-        "")
-            ;;
-    esac
+    if [[ "$extra" = "tunnels" || "$extra" = "both" ]]
+    then
+        check netns_add_sess_dataif_tunnels \
+            "$lns_cmd_out" \
+            "$lac_cmd_out" \
+            "$extra_tunnels" \
+            "$l2tp_version" \
+            "$family" \
+            "$encap"
+    fi
+
+    if [[ "$extra" = "sessions" || "$extra" = "both" ]]
+    then
+        check wait_file_exists /tmp/l2tp-ktest-sess-dataif-s 0.5 10
+        lns_tid=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f2 | cut -d/ -f1)
+        lac_tid=$(cat /tmp/l2tp-ktest-sess-dataif-s | head -1 | cut -d" " -f4 | cut -d/ -f1)
+        check test -n "$lns_tid"
+        check netns_add_sess_dataif_sessions \
+            "$lns_cmd_out" \
+            "$lac_cmd_out" \
+            0 \
+            "$extra_tunnels" \
+            "$pwtype"
+    fi
+
+    if test -n "$extra"
+    then
+        cat $lns_cmd_out > $lns_fifo
+        cat $lac_cmd_out > $lac_fifo
+    fi
+
+    if [[ "$extra" = "tunnels" || "$extra" = "both" ]]
+    then
+        check wait_netns_tunnels_exist lns $((extra_tunnels+1)) 0.5 60
+        check wait_netns_tunnels_exist lac $((extra_tunnels+1)) 0.5 60
+    fi
+
+    if [[ "$extra" = "sessions" || "$extra" = "both" ]]
+    then
+        check wait_netns_sessions_exist lns $lns_tid $((extra_tunnels+1)) 0.5 60
+        check wait_netns_sessions_exist lac $lac_tid $((extra_tunnels+1)) 0.5 60
+    fi
 
     # After bringing interfaces up there's a bit of unrelated traffic due to
     # stack discovery and/or background processes.  So sleep a moment to let
