@@ -766,7 +766,7 @@ test_datapath_perf()
     then
         lns_sess_dataif_extra_args="-F $lns_fifo"
         lac_sess_dataif_extra_args="-F $lac_fifo"
-        ulimit -n $((extra_tunnels*2))
+        ulimit -n $((extra_tunnels*6))
     fi
 
     three_host_setup "$l2tp_version" \

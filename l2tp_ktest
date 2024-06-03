@@ -678,6 +678,8 @@ then
     tc_data_perf_v3_inet_udp_eth() { data_perf_check 3 inet udp eth; }
     tc_data_perf_v3_inet_ip_eth() { data_perf_check 3 inet ip eth; }
     tc_data_perf_v2_inet_udp_ppp_tunnels() { data_perf_check 2 inet udp ppp tunnels; }
+    tc_data_perf_v2_inet_udp_ppp_sessions() { data_perf_check 2 inet udp ppp sessions; }
+    tc_data_perf_v2_inet_udp_ppp_both() { data_perf_check 2 inet udp ppp both; }
     tc_data_perf_v3_inet_udp_eth_tunnels() { data_perf_check 3 inet udp eth tunnels; }
     tc_data_perf_v3_inet_ip_eth_tunnels() { data_perf_check 3 inet ip eth tunnels; }
     tc_data_perf_v3_inet_udp_eth_sessions() { data_perf_check 3 inet udp eth sessions; }
