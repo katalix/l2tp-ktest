@@ -43,16 +43,26 @@ kmodrefleak_check()
     return $ret
 }
 
+get_uptime_s()
+{
+    cat /proc/uptime | cut -d" " -f1
+}
+
+readonly L2TP_KTEST_TIMING_OUT="/tmp/l2tp_ktest_timing"
 runtest()
 {
+    local tstart
     local ret=0
 
     kmodrefleak_setup
     kmemleak_clear
     type pre_$1 &> /dev/null && pre_$1
 
+    rm -f $L2TP_KTEST_TIMING_OUT
+    tstart=$(get_uptime_s)
     $1
     ret=$?
+    echo "$(get_uptime_s) $tstart - p" | dc > $L2TP_KTEST_TIMING_OUT
 
     type post_$1 &> /dev/null && post_$1
     kmemleak_check || {
@@ -62,6 +72,11 @@ runtest()
 
     test $ret -eq 0 && kmodrefleak_check || ret=1
     return $ret
+}
+
+get_test_timing()
+{
+    test -f $L2TP_KTEST_TIMING_OUT && cat $L2TP_KTEST_TIMING_OUT || echo "??"
 }
 
 report_and_exit() {
@@ -820,10 +835,10 @@ do
     runtest $tc
     if test $? -ne 0 || test $CHECK_FAIL -ne $check_fail
     then
-        err "testcase $tc FAILED"
+        err "testcase $tc FAILED ($(get_test_timing) seconds)"
         nfails=$((nfails+1))
     else
-        log "testcase $ntests : ok"
+        log "testcase $ntests : ok ($(get_test_timing) seconds)"
     fi
 done
 
