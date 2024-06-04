@@ -7,6 +7,7 @@
 
 OPT_CHECK_STATS=0
 OPT_VERBOSE=0
+OPT_CSV_OUT=
 
 log() { echo "[$(date)] $*"; }
 err() { log "error: $*" 1>&2; false; }
@@ -759,6 +760,7 @@ test_datapath_perf()
     local extra_tunnels=5000
     local lns_tid
     local lac_tid
+    local datarate
 
     rm -f $lns_cmd_out $lac_cmd_out
 
@@ -852,7 +854,15 @@ test_datapath_perf()
                      --json --logfile $iperf_logfile \
                      -6 -Z -t 3 -B fc00:101::1 -c fc00:101::2
     fi
-    cat $iperf_logfile | jq '.server_output_json.intervals | first | .sum.bits_per_second' > data_perf_check.txt
+
+    datarate=$(cat $iperf_logfile | jq '.server_output_json.intervals | first | .sum.bits_per_second' | numfmt --to=si)
+    if test -n "$OPT_CSV_OUT"
+    then
+        test -f $OPT_CSV_OUT || {
+            echo "# Version,family,encap,pwtype,extra,datarate" > $OPT_CSV_OUT
+        }
+        echo "l2tpv$l2tp_version,$family,$encap,$pwtype,$extra,$datarate" >> $OPT_CSV_OUT
+    fi
 }
 
 # $1 -- socket family
@@ -1012,7 +1022,7 @@ show_usage()
         -h  print this usage information
         -s  check dataplane statistics where appropriate
         -v  enable verbose logging
-        -p  pause on failure, rather than continuing
+        -c  CSV output file for test modes that support it
 
         Test modes and their arguments are as follows:
 
@@ -1066,12 +1076,13 @@ trap cleanup EXIT
 
 which ping6 > /dev/null 2>&1 && PING6=$(which ping6) || PING6=$(which ping)
 
-while getopts hvs o
+while getopts hvsc: o
 do
     case $o in
         h) show_usage; exit 0;;
         v) OPT_VERBOSE=1;;
         s) OPT_CHECK_STATS=1;;
+        c) OPT_CSV_OUT=$OPTARG;;
         *) exit 1;;
     esac
 done

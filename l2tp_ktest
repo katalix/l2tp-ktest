@@ -16,6 +16,7 @@ CHECK_COUNT=0
 CHECK_FAIL=0
 EXIT_ON_FIRST_ERROR=0
 VERBOSE=0
+PERF_TEST_CSV_OUT="./l2tp_ktest_perf.$$.csv"
 
 log() { echo "[$(date)] $@"; }
 err() { log "ERROR: $@" 1>&2; false; }
@@ -86,6 +87,10 @@ report_and_exit() {
     local exit_code=$4
     local reason=""
     test $exit_code -eq 0 || reason="(aborted)"
+    test -f "$PERF_TEST_CSV_OUT" && {
+        log "Perf results $PERF_TEST_CSV_OUT:"
+        cat $PERF_TEST_CSV_OUT
+    }
     log "Summary: $ntests testcases run ($check_count checks), of which $nfails failed $reason"
     exit $exit_code
 }
@@ -319,13 +324,9 @@ data_shutdown_check()
 data_perf_check()
 {
     local rate
-    local opts=""
+    local opts="-c $PERF_TEST_CSV_OUT"
     test $VERBOSE -eq 1 && opts="$opts -v"
-    if check $(dirname $0)/netns_datapath $opts datapath_perf $@
-    then
-        rate=$(cat data_perf_check.txt | numfmt --to=si)
-        echo "l2tpv${1} $2 $3 $4 $5: ${rate}bps"
-    fi
+    check $(dirname $0)/netns_datapath $opts datapath_perf $@
 }
 
 # $1 -- L2TP version
