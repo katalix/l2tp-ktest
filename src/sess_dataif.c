@@ -77,9 +77,13 @@
 #include "vector.h"
 
 struct tunnel_options {
+    enum {
+        TUNNEL_STATE_CTRL_TX,
+        TUNNEL_STATE_CTRL_RX,
+        TUNNEL_STATE_UP,
+    } state;
     struct l2tp_options lo;
     int tfd;
-    int ppptctl;
     struct sockaddr_storage peer_addr;
     socklen_t peer_addr_len;
     uint32_t index;
@@ -95,8 +99,9 @@ static const char *g_cmdline_fifo = NULL;
 static FILE *g_status_file = NULL;
 static size_t g_n_tunnels;
 static time_t g_timeout_s;
+static sem_t g_tunnel_sem;
+static bool g_is_running;
 static bool g_is_client;
-static sem_t g_running;
 
 static const char *g_cmdline_args = "hCT:v:f:e:p:k:K:P:L:m:N:i:M:F:A:";
 
@@ -198,7 +203,7 @@ static void send_ctrl_packet(struct tunnel_options *to)
     }
 }
 
-static void recv_ctrl_packet(struct tunnel_options *to)
+static void recv_ctrl_packet_1(struct tunnel_options *to)
 {
     assert(to);
     char buf[1024] = {};
@@ -216,15 +221,16 @@ static void recv_ctrl_packet(struct tunnel_options *to)
     }
 }
 
-static void wait_peer(struct tunnel_options *to)
+static bool recv_ctrl_packet(struct tunnel_options *to)
 {
-    if (g_is_client) {
-        send_ctrl_packet(to);
-        recv_ctrl_packet(to);
-    } else {
-        recv_ctrl_packet(to);
-        send_ctrl_packet(to);
+    struct pollfd fds[1] = {
+        { .fd = to->tfd, .events = POLLIN }
+    };
+    if (poll(fds, 1, 100) > 0) {
+        recv_ctrl_packet_1(to);
+        return true;
     }
+    return false;
 }
 
 /* Close the tunnel(s).
@@ -232,9 +238,10 @@ static void wait_peer(struct tunnel_options *to)
 static void on_quit(int sig)
 {
     size_t i;
+    g_is_running = false;
     signal(sig, SIG_IGN); /* ignore this signal */
     for (i = 0; i < g_n_tunnels; i++) {
-        sem_post(&g_running);
+        sem_post(&g_tunnel_sem);
     }
 }
 
@@ -244,22 +251,52 @@ static void *tunnel_thread(void *dptr)
 
     tunnel_indicate_created(g_status_filename, to->lo.tid);
 
-    /* wait for peer */
-    wait_peer(to);
-    tunnel_indicate_up(g_status_filename, to->lo.tid);
+    to->state = g_is_client ? TUNNEL_STATE_CTRL_TX : TUNNEL_STATE_CTRL_RX;
 
-    /* set the kill timer running if required: avoid racing
-     * around alarm() by only calling this from the first
-     * tunnel thread
-     */
-    if (g_timeout_s && to->index == 0) {
-        signal(SIGALRM, on_quit);
-        alarm(g_timeout_s);
+    while (g_is_running && to->state != TUNNEL_STATE_UP) {
+        if (g_is_client) {
+            switch (to->state) {
+                case TUNNEL_STATE_CTRL_TX:
+                    send_ctrl_packet(to);
+                    to->state = TUNNEL_STATE_CTRL_RX;
+                    break;
+                case TUNNEL_STATE_CTRL_RX:
+                    if (recv_ctrl_packet(to))
+                        to->state = TUNNEL_STATE_UP;
+                    break;
+                case TUNNEL_STATE_UP:
+                    break;
+            }
+        } else {
+            switch (to->state) {
+                case TUNNEL_STATE_CTRL_TX:
+                    send_ctrl_packet(to);
+                    to->state = TUNNEL_STATE_UP;
+                    break;
+                case TUNNEL_STATE_CTRL_RX:
+                    if (recv_ctrl_packet(to))
+                        to->state = TUNNEL_STATE_CTRL_TX;
+                    break;
+                case TUNNEL_STATE_UP:
+                    break;
+            }
+        }
     }
 
-    sem_wait(&g_running);
+    if (to->state == TUNNEL_STATE_UP) {
+        tunnel_indicate_up(g_status_filename, to->lo.tid);
 
-    close(to->tfd);
+        /* set the kill timer running if required: avoid racing
+         * around alarm() by only calling this from the first
+         * tunnel thread
+         */
+        if (g_timeout_s && to->index == 0) {
+            signal(SIGALRM, on_quit);
+            alarm(g_timeout_s);
+        }
+    }
+
+    sem_wait(&g_tunnel_sem);
 
     return NULL;
 }
@@ -333,7 +370,14 @@ static void create_tunnel_1(struct tunnel_options *to)
     to->tfd = tunnel_socket(to->lo.family, to->lo.protocol, to->lo.tid, &to->lo.local_addr, &to->lo.peer_addr);
     if (to->tfd < 0) die("Failed to create managed tunnel socket\n");
 
-    ret = kernel_tunnel_create(to->tfd, &to->lo, &to->ppptctl);
+    {
+        int flags = fcntl(to->tfd, F_GETFL, 0);
+        if (flags < 0) die("Failed to get tunnel socket flags\n");
+        if (0 != fcntl(to->tfd, F_SETFL, flags|O_NONBLOCK))
+            die("Failed to set tunnel socket non-blocking\n");
+    }
+
+    ret = kernel_tunnel_create(to->tfd, &to->lo, NULL);
     if (ret) die("Failed to create kernel context for tunnel %u/%u\n", to->lo.tid, to->lo.ptid);
 }
 
@@ -378,6 +422,7 @@ static void wait_tunnel(uint32_t idx)
     if (to) {
         assert(to->index == idx);
         pthread_join(to->thread, NULL);
+        close(to->tfd);
         free(to);
     }
 }
@@ -665,7 +710,12 @@ int main(int argc, char **argv)
 
     log("sess_dataif %s\n", g_is_client ? "CLIENT" : "SERVER");
 
-    sem_init(&g_running, 0, 0);
+    sem_init(&g_tunnel_sem, 0, 0);
+    g_is_running = true;
+
+    signal(SIGINT, on_quit);
+    signal(SIGTERM, on_quit);
+    signal(SIGQUIT, on_quit);
 
     if (lo.l2tp_version)
         add_tunnel(&lo);
